@@ -5,6 +5,7 @@ backup/*
 logs/*
 downloads/server
 downloads/*.pth
+downloads/*.pth.1
 
 real/camera_depth_scale.txt
 real/camera_pose.txt
@@ -21,3 +22,7 @@ realsense/realsense
 commands.txt
 visualization.push.png
 visualization.grasp.png
+*.swp
+*.swo
+
+.vscode/
