@@ -143,5 +143,10 @@ in this main.py:
 - trainer.forward() -> execute action
 - compute label -> backprop
 
-what we are gonna do is modify the 'compute label' part:
+## modify
+
+- what we are gonna do is modify the 'compute label' part: not only grasp_success, need grasp_right_success
+- to satisfy above, we need simulators scenes, and method to construct natural language instructions
+- still 'forward': add instruction. a pretrained NLP model for features, then change the input of grasp net.
+
 
