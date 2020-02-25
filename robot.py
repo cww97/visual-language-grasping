@@ -36,7 +36,9 @@ class Robot(object):
             self.mesh_list = os.listdir(self.obj_mesh_dir)
 
             # Randomly choose objects to add to scene
-            self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
+            # self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
+            self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
+
             self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
 
             # Make sure to have the server side running in V-REP: 
@@ -393,7 +395,7 @@ class Robot(object):
         return TCP_forces
 
 
-    def close_gripper(self, async=False):
+    def close_gripper(self, _async=False):
 
         if self.is_sim:
             gripper_motor_velocity = -0.5
@@ -417,7 +419,7 @@ class Robot(object):
             tcp_command = "set_digital_out(8,True)\n"
             self.tcp_socket.send(str.encode(tcp_command))
             self.tcp_socket.close()
-            if async:
+            if _async:
                 gripper_fully_closed = True
             else:
                 time.sleep(1.5)
@@ -425,7 +427,7 @@ class Robot(object):
 
         return gripper_fully_closed
 
-    def open_gripper(self, async=False):
+    def open_gripper(self, _async=False):
 
         if self.is_sim:
             gripper_motor_velocity = 0.5
@@ -443,7 +445,7 @@ class Robot(object):
             tcp_command = "set_digital_out(8,False)\n"
             self.tcp_socket.send(str.encode(tcp_command))
             self.tcp_socket.close()
-            if not async:
+            if not _async:
                 time.sleep(1.5)
 
 

@@ -175,7 +175,7 @@ class Trainer(object):
             # Return affordances (and remove extra padding)
             for rotate_idx in range(len(output_prob)):
                 if rotate_idx == 0:
-					push_predictions = F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[:,0,(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
+                    push_predictions = F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[:,0,(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
                     grasp_predictions = F.softmax(output_prob[rotate_idx][1], dim=1).cpu().data.numpy()[:,0,(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
                 else:
                     push_predictions = np.concatenate((push_predictions, F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[:,0,(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),(padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]), axis=0)
