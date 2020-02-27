@@ -26,3 +26,4 @@ visualization.grasp.png
 *.swo
 
 .vscode/
+.idea/

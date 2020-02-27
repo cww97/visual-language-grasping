@@ -37,6 +37,8 @@ class Robot(object):
 
             # Randomly choose objects to add to scene
             self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
+            # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
+
             self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
 
             # Make sure to have the server side running in V-REP: 
@@ -173,6 +175,8 @@ class Robot(object):
             if self.is_testing and self.test_preset_cases:
                 object_position = [self.test_obj_positions[object_idx][0], self.test_obj_positions[object_idx][1], self.test_obj_positions[object_idx][2]]
                 object_orientation = [self.test_obj_orientations[object_idx][0], self.test_obj_orientations[object_idx][1], self.test_obj_orientations[object_idx][2]]
+            # import pdb; pdb.set_trace()
+            print('object_idx = %d, len = %d' % (object_idx, len(self.obj_mesh_ind)))
             object_color = [self.obj_mesh_color[object_idx][0], self.obj_mesh_color[object_idx][1], self.obj_mesh_color[object_idx][2]]
             ret_resp,ret_ints,ret_floats,ret_strings,ret_buffer = vrep.simxCallScriptFunction(self.sim_client, 'remoteApiCommandServer',vrep.sim_scripttype_childscript,'importShape',[0,0,255,0], object_position + object_orientation + object_color, [curr_mesh_file, curr_shape_name], bytearray(), vrep.simx_opmode_blocking)
             if ret_resp == 8:
@@ -393,7 +397,7 @@ class Robot(object):
         return TCP_forces
 
 
-    def close_gripper(self, async=False):
+    def close_gripper(self, _async=False):
 
         if self.is_sim:
             gripper_motor_velocity = -0.5
@@ -417,7 +421,7 @@ class Robot(object):
             tcp_command = "set_digital_out(8,True)\n"
             self.tcp_socket.send(str.encode(tcp_command))
             self.tcp_socket.close()
-            if async:
+            if _async:
                 gripper_fully_closed = True
             else:
                 time.sleep(1.5)
@@ -425,7 +429,7 @@ class Robot(object):
 
         return gripper_fully_closed
 
-    def open_gripper(self, async=False):
+    def open_gripper(self, _async=False):
 
         if self.is_sim:
             gripper_motor_velocity = 0.5
@@ -443,7 +447,7 @@ class Robot(object):
             tcp_command = "set_digital_out(8,False)\n"
             self.tcp_socket.send(str.encode(tcp_command))
             self.tcp_socket.close()
-            if not async:
+            if not _async:
                 time.sleep(1.5)
 
 
