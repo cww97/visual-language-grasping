@@ -70,3 +70,8 @@ class Config(object):
         self.continue_logging = args.continue_logging # Continue logging from previous session
         self.logging_directory = os.path.abspath(args.logging_directory) if self.continue_logging else os.path.abspath('logs')
         self.save_visualizations = args.save_visualizations # Save visualizations of FCN predictions? Takes 0.6s per training step if set to True
+
+        # ------------ global variables ----------------
+        self.ACTION_ID = {'push': 0, 'grasp': 1,}
+        self.ACTION_STR = ('push', 'grasp')
+

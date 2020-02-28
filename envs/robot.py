@@ -5,7 +5,7 @@ import time
 import os
 import numpy as np
 import utils
-from simulation import vrep
+from envs.simulation import vrep
 
 class Robot(object):
     def __init__(self, is_sim, obj_mesh_dir, num_obj, workspace_limits,
