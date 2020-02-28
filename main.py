@@ -173,6 +173,18 @@ def main(args):
     # -------------------------------------------------------------
     # -------------------------------------------------------------
 
+    prev_color_img = None
+    prev_depth_img = None
+    prev_color_heightmap = None
+    prev_depth_heightmap = None
+    prev_valid_depth_heightmap = None
+    prev_push_success = None
+    prev_grasp_success = None
+    prev_primitive_action = None
+    prev_push_predictions = None
+    prev_grasp_predictions = None
+    prev_best_pix_ind = None
+
     # Start main training/testing loop
     while True:
         print('\n%s iteration: %d' % ('Testing' if args.is_testing else 'Training', trainer.iteration))
@@ -229,7 +241,8 @@ def main(args):
             nonlocal_variables['executing_action'] = True
 
         # Run training iteration in current thread (aka training thread)
-        if 'prev_color_img' in locals():
+        # if 'prev_color_img' in locals():
+        if prev_color_img is not None:
 
             # Detect changes
             depth_diff = abs(depth_heightmap - prev_depth_heightmap)
@@ -362,4 +375,3 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--file', dest='file')  # Run main program with specified config file
     args = parser.parse_args()
     main(Config(args.file))
-
