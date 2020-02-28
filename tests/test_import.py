@@ -2,7 +2,6 @@ def test_main():
     with open('main.py') as f:
         for _ in f.readlines():
             if 'import' in _:
-                print(_)
                 exec(_)
 
 def test_create():
