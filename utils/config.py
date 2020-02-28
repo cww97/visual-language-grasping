@@ -1,8 +1,8 @@
-import argparse
 import os
 import numpy as np
 import threading
 import yaml
+
 
 class Config(object):
     class ConfigLoader(object):
@@ -30,7 +30,6 @@ class Config(object):
                 if not hasattr(Config, '_instance'):
                     Config._instance = object.__new__(cls)
         return Config._instance
-
 
     def __init__(self, config_file):
         args = Config.ConfigLoader(config_file)
