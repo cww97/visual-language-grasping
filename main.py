@@ -10,10 +10,10 @@ import numpy as np
 import torch
 
 import utils
+from envs.real.robot import RealRobot
+from envs.simulation.robot import SimRobot
+from envs.simulation.robot import TestRobot
 from logger import Logger
-from real_robot import RealRobot
-from sim_robot import SimRobot
-from sim_robot import TestRobot
 from trainer import Trainer
 from utils.config import Config
 
@@ -362,3 +362,4 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--file', dest='file')  # Run main program with specified config file
     args = parser.parse_args()
     main(Config(args.file))
+

@@ -2,7 +2,7 @@
 
 import numpy as np
 import time
-from robot import Robot
+from envs.real.robot import RealRobot
 
 
 # User options (change me)
@@ -13,9 +13,7 @@ workspace_limits = np.asarray([[0.3, 0.748], [-0.224, 0.224], [-0.255, -0.1]]) #
 # ---------------------------------------------
 
 # Initialize robot and move to home pose
-robot = Robot(False, None, None, workspace_limits,
-              tcp_host_ip, tcp_port, None, None,
-              False, None, None)
+robot = RealRobot(tcp_host_ip, tcp_port, None, None, workspace_limits)
 
 # Repeatedly grasp at middle of workspace
 grasp_position = np.sum(workspace_limits, axis=1)/2

@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 import cv2
-from real.camera import Camera
-from robot import Robot
+from envs.real.camera import Camera
+from envs.real.robot import RealRobot
     
 
 # User options (change me)
@@ -20,9 +20,7 @@ tool_orientation = [2.22,-2.22,0]
 
 
 # Move robot to home pose
-robot = Robot(False, None, None, workspace_limits,
-              tcp_host_ip, tcp_port, rtc_host_ip, rtc_port,
-              False, None, None)
+robot = Robot(tcp_host_ip, tcp_port, rtc_host_ip, rtc_port, workspace_limits)
 robot.open_gripper()
 
 # Slow down robot

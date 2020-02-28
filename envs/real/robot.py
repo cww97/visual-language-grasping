@@ -5,12 +5,13 @@ import time
 import numpy as np
 
 import utils
-from utils.robot import Robot
 
+from .camera import Camera
+from ..robot import Robot as BaseRobot
 
-class RealRobot(Robot):
+class RealRobot(BaseRobot):
     def __init__(self, tcp_host_ip, tcp_port, rtc_host_ip, rtc_port, workspace_limits):
-        Robot.__init__(self, workspace_limits)
+        BaseRobot.__init__(self, workspace_limits)
 
         # Connect to robot client
         self.tcp_host_ip = tcp_host_ip
@@ -44,7 +45,7 @@ class RealRobot(Robot):
         self.go_home()
 
         # Fetch RGB-D data from RealSense camera
-        from real.camera import Camera
+       
         self.camera = Camera()
         self.cam_intrinsics = self.camera.intrinsics
 

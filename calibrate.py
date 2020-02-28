@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 import cv2
-from real.camera import Camera
-from robot import Robot
+from envs.real.camera import Camera
+from envs.real.robot import RealRobot
 from scipy import optimize  
 from mpl_toolkits.mplot3d import Axes3D  
 
@@ -40,9 +40,7 @@ observed_pix = []
 
 # Move robot to home pose
 print('Connecting to robot...')
-robot = Robot(False, None, None, workspace_limits,
-              tcp_host_ip, tcp_port, rtc_host_ip, rtc_port,
-              False, None, None)
+robot = RealRobot(tcp_host_ip, tcp_port, rtc_host_ip, rtc_port, workspace_limits)
 robot.open_gripper()
 
 # Slow down robot

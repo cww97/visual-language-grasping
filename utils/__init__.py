@@ -1,11 +1,10 @@
 import struct
+
+import cv2
 import math
 import numpy as np
-import cv2
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 
 def get_pointcloud(color_img, depth_img, camera_intrinsics):

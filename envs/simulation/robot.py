@@ -4,13 +4,13 @@ import time
 import numpy as np
 
 import utils
-from simulation import vrep
-from utils.robot import Robot
+from . import vrep
+from ..robot import Robot as BaseRobot
 
 
-class SimRobot(Robot):
+class SimRobot(BaseRobot):
     def __init__(self, obj_mesh_dir, num_obj, workspace_limits):
-        Robot.__init__(self, workspace_limits)
+        BaseRobot.__init__(self, workspace_limits)
 
         # Define colors for object meshes (Tableau palette)
         self.color_space = np.asarray([[78.0, 121.0, 167.0],  # blue
