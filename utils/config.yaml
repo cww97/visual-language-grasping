@@ -29,7 +29,7 @@ experience_replay: false
 ## use handcrafted grasping algorithm when grasping fails too many times in a row during training?
 heuristic_bootstrap: false
 explore_rate_decay: false
-grasp_only: true # false
+grasp_only: false
 
 # -------------- Testing options --------------
 is_testing: false

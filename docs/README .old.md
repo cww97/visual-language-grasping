@@ -277,3 +277,36 @@ where `XXX.XXX.X.XXX` is the network IP address of your UR5 robot controller.
 
 * Use `touch.py` to test calibrated camera extrinsics -- provides a UI where the user can click a point on the RGB-D image, and the robot moves its end-effector to the 3D location of that point
 * Use `debug.py` to test robot communication and primitive actions
+
+## 文件说明 - old
+
+前面三个文件感觉相当混乱,整理ing
+- `main.py`: 
+- `trainer.py`:
+- `models.py`: 
+- `utils.py`: 看名字就知道干啥的了吧
+- `robot.py` sim和real的机械臂都在里面
+
+### Tools
+
+- `evaluate.py`: 评估成功率
+- `plot.py`, 画图,loss, 成功率等等
+- `create.py`: sim中创建自己的测试用例
+
+### Real
+
+- `real/capture.py`: 测试真实环境中的相机能正确传输数据
+- `calibrate.py`: 校准real环境中的相机位置
+- `debug.py`: 在real环境下测试机械臂的连接与动作
+- `touch.py`: 测试外部相机，有一个UI点RGB-D图像上的一个点，然后机械臂移动过去
+
+### 其他目录说明
+
+- docs: 自己的一些笔记和文档
+- downloads: 下载原作者预训练模型的脚本和模型
+- images: README中的image文件
+- logs: log嘛你懂我意思吧
+- objects: sim环境中物体模型文件(`.obj`)
+- real: real环境中的相机与测试脚本，感觉可以把其他的real的也扔进去
+- realsense: 跑真机械臂的jdk环境(`.cpp`)
+- simulation: vrepAPI和场景文件(`.ttt`)
