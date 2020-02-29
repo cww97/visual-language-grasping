@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 import torch
 from torch.autograd import Variable
-from envs.robot import Robot
 from trainer import Trainer
 from logger import Logger
 import utils
@@ -298,7 +297,7 @@ def main(args):
             if not args.is_testing:
                 if args.explore_rate_decay:
                     explore_prob = max(0.5 * np.power(0.9998, trainer.iteration),0.1) 
-                else
+                else:
                     explore_prob = 0.5
 
             # Do sampling for experience replay
@@ -395,7 +394,10 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Train robotic agents to learn visual language grasp.')
-    parser.add_argument('-f', '--file', dest='file')  # Run main program with specified config file
+    parser = argparse.ArgumentParser(
+        description='Train robotic agents to learn visual language grasp.'
+    )
+    # Run main program with specified config file
+    parser.add_argument('-f', '--file', dest='file')  
     args = parser.parse_args()
     main(Config(args.file))
