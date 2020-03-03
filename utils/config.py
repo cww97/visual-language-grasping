@@ -31,7 +31,7 @@ class Config(object):
                     Config._instance = object.__new__(cls)
         return Config._instance
 
-    def __init__(self, config_file):
+    def __init__(self, config_file=None):
         args = Config.ConfigLoader(config_file)
         # --------------- Setup options ---------------
         self.is_sim = args.is_sim # Run in simulation?

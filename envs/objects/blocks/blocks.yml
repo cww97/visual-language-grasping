@@ -1,0 +1,19 @@
+# block names here
+# generate the instruction by random choice a name
+0.obj: 
+  - triangular prism
+1.obj: 
+  - arch
+2.obj:
+  - cuboid
+3.obj:
+  - cuboid
+4.obj:
+  - cube
+6.obj:
+  - cuboid
+  - regular quadrangular prism
+7.obj:
+  - semi-cylinder
+8.obj:
+ - cylinder

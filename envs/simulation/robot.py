@@ -2,6 +2,7 @@ import os
 import time
 
 import numpy as np
+import yaml
 
 import utils
 from . import vrep
@@ -27,7 +28,18 @@ class SimRobot(BaseRobot):
         # Read files in object mesh directory
         self.obj_mesh_dir = obj_mesh_dir
         self.num_obj = num_obj
-        self.mesh_list = os.listdir(self.obj_mesh_dir)
+        self.mesh_list = list(filter(lambda x: x.endswith('.obj'), os.listdir(self.obj_mesh_dir)))
+        
+        try:
+            with open(os.path.join(obj_mesh_dir, 'blocks.yml')) as f:
+                self.mesh_name = yaml.safe_load(f)
+                for key, value in self.mesh_name.items():
+                    if key not in self.mesh_list:
+                        raise Exception
+        except Exception:
+            print('Failed to read block names')
+            exit(1)
+
 
         # Randomly choose objects to add to scene
         self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
@@ -234,6 +246,13 @@ class SimRobot(BaseRobot):
 
         return color_img, depth_img
 
+    def get_instruction(self):
+        instruction_template = "pick up the {color} {shape}."
+        ind = np.random.randint(0, self.num_obj)
+        color = utils.get_mush_color_name(self.obj_mesh_color[ind])
+        shape = np.random.choice(self.mesh_name[self.mesh_list[self.obj_mesh_ind[ind]]])
+        return instruction_template.format(color=color, shape=shape)
+
     def close_gripper(self, _async=False):
         gripper_motor_velocity = -0.5
         gripper_motor_force = 100
@@ -436,6 +455,7 @@ class SimRobot(BaseRobot):
 class TestRobot(SimRobot):
     def __init__(self, obj_mesh_dir, num_obj, workspace_limits, test_preset_file):
 
+        BaseRobot.__init__(workspace_limits)
         # Read files in object mesh directory
         self.obj_mesh_dir = obj_mesh_dir
         self.num_obj = num_obj
