@@ -80,6 +80,7 @@ class SimRobot(BaseRobot):
         # Setup virtual camera in simulation
         self.setup_sim_camera()
         self.object_handles = []
+        self.target_handle = None
 
         # Add objects to simulation environment
         self.add_objects()
@@ -187,9 +188,10 @@ class SimRobot(BaseRobot):
 
         return np.sum(key_nn_idx == np.asarray(range(self.num_obj)) % 4)
 
-    def check_goal_reached(self):
+    def check_goal_reached(self, handle):
         # TODO
-        goal_reached = self.get_task_score() == self.num_obj
+        # goal_reached = self.get_task_score() == self.num_obj
+        goal_reached = self.target_handle == handle
         return goal_reached
 
     def get_obj_positions(self):
@@ -254,10 +256,13 @@ class SimRobot(BaseRobot):
         return color_img, depth_img
 
     def get_instruction(self):
+        # TODO
+        # add more template
         instruction_template = "pick up the {color} {shape}."
         ind = np.random.randint(0, self.num_obj)
         color = utils.get_mush_color_name(self.obj_mesh_color[ind])
         shape = np.random.choice(self.mesh_name[self.mesh_list[self.obj_mesh_ind[ind]]])
+        self.target_handle = self.object_handles[ind]
         return instruction_template.format(color=color, shape=shape)
 
     def close_gripper(self, _async=False):
@@ -361,9 +366,12 @@ class SimRobot(BaseRobot):
             object_positions = object_positions[:, 2]
             grasped_object_ind = np.argmax(object_positions)
             grasped_object_handle = self.object_handles[grasped_object_ind]
+                
             vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
 
-        return grasp_success
+        # TODO:
+        # how to deal with picked up wrong object ? 
+        return grasp_success and self.check_goal_reached(grasped_object_handle)
 
     def push(self, position, heightmap_rotation_angle, workspace_limits):
         print('Executing: push at (%f, %f, %f)' %
