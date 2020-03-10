@@ -29,20 +29,26 @@ class SimRobot(BaseRobot):
         self.obj_mesh_dir = obj_mesh_dir
         self.num_obj = num_obj
         self.mesh_list = list(filter(lambda x: x.endswith('.obj'), os.listdir(self.obj_mesh_dir)))
-        
+
         try:
             with open(os.path.join(obj_mesh_dir, 'blocks.yml')) as f:
-                self.mesh_name = yaml.safe_load(f)
-                for key, value in self.mesh_name.items():
-                    if key not in self.mesh_list:
-                        raise Exception
+                yaml_dict = yaml.safe_load(f)
+            groups = yaml_dict['groups']
+            self.mesh_name = yaml_dict['names']
+            for obj in self.mesh_list:
+                if obj not in self.mesh_name.keys():
+                    raise Exception
         except Exception:
-            print('Failed to read block names')
+            print('Failed to read block names/groups')
             exit(1)
 
-
         # Randomly choose objects to add to scene
-        self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
+        group_chosen = np.random.choice(groups, size=self.num_obj, replace=False)
+        self.obj_mesh_ind = np.array([self.mesh_list.index(np.random.choice(obj)) for obj in group_chosen])
+        # TODO
+        # handle <-> ind <-> obj -> name
+        # Just for debug
+        print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
         # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
 
         self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
@@ -182,6 +188,7 @@ class SimRobot(BaseRobot):
         return np.sum(key_nn_idx == np.asarray(range(self.num_obj)) % 4)
 
     def check_goal_reached(self):
+        # TODO
         goal_reached = self.get_task_score() == self.num_obj
         return goal_reached
 
