@@ -126,6 +126,9 @@ class Trainer(object):
 		self.clearance_log = self.clearance_log.tolist()
 
 
+	# ########################################
+	# TODO: add a instructor here
+	# #############################################
 	# Compute forward pass through model to compute affordances/Q
 	def forward(self, color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=-1):
 

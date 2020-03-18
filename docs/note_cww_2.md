@@ -56,3 +56,32 @@ main里的process_actions是执行模型决策的另一个进程，前面是大�
 - `save logger`，save循环变量(32行)
 
 
+## seq2seq
+
+sequence to seqence 模型主要包含三个部分: `lstmEncoder`, `Attention`, `lstmEncoder`:
+
+### EncoderLSTM: 
+- input是 inputs, lengths, 一串序列与其长度, 
+- 输出是ctx(language的feature), h_t, c_t, 分别是内容项，hidden state和cell
+
+### Attention: 
+- input: 将两者对齐：1. action+feature+h_t+c_t; 2. encoder的输出(language的feature)
+- output: 加了attention权重的action 和attention系数
+
+### DecoderLSTM
+- input: action, feature(image), h_0, c_0, ctx
+- output: h_1,c_1,alpha(attention系数),logit(attention的output)
+
+这里是先用自己的lstm(没有ctx做输入)输出一个action然后与ctx对齐
+
+## plan
+
+之前的模型是先densenet121 然后自己卷积了两层就输出action了
+
+现在打算
+
+- densenet121 提取图像的feature
+- LSTM 提取instruction 的 feature
+- 然后硬加卷积几层输出action再和第二步的feature attention
+
+
