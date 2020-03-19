@@ -121,6 +121,9 @@ class RealRobot(BaseRobot):
             byte_idx += 8
         return TCP_forces
 
+    def get_instruction(self):
+        raise NotImplementedError()
+
     def close_gripper(self, _async=False):
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))

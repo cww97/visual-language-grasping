@@ -3,8 +3,8 @@ from abc import abstractmethod
 
 
 class Robot(metaclass=ABCMeta):
-    def __init__(self, workspace_limit):
-        self.workspace_limits = workspace_limit
+    def __init__(self, workspace_limits):
+        self.workspace_limits = workspace_limits
 
     @abstractmethod
     def get_camera_data(self):

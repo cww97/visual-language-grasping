@@ -220,6 +220,7 @@ def main(args):
         stuff_count = np.zeros(valid_depth_heightmap.shape)
         stuff_count[valid_depth_heightmap > 0.02] = 1
         empty_threshold = 300 if not (args.is_sim and args.is_testing) else 10
+        # TODO
         # if args.is_sim and args.is_testing: empty_threshold = 10
         if np.sum(stuff_count) < empty_threshold or (args.is_sim and sum(no_change_count) > 10):
             no_change_count = [0, 0]
