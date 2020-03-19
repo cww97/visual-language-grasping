@@ -9,6 +9,7 @@ import utils
 from .camera import Camera
 from ..robot import Robot as BaseRobot
 
+
 class RealRobot(BaseRobot):
     def __init__(self, tcp_host_ip, tcp_port, rtc_host_ip, rtc_port, workspace_limits):
         BaseRobot.__init__(self, workspace_limits)
@@ -45,7 +46,7 @@ class RealRobot(BaseRobot):
         self.go_home()
 
         # Fetch RGB-D data from RealSense camera
-       
+
         self.camera = Camera()
         self.cam_intrinsics = self.camera.intrinsics
 
@@ -120,6 +121,9 @@ class RealRobot(BaseRobot):
             byte_idx += 8
         return TCP_forces
 
+    def get_instruction(self):
+        raise NotImplementedError()
+
     def close_gripper(self, _async=False):
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
@@ -162,7 +166,7 @@ class RealRobot(BaseRobot):
             # [min(np.abs(actual_tool_pose[j] - tool_orientation[j-3]), np.abs(np.abs(actual_tool_pose[j] - tool_orientation[j-3]) - np.pi*2)) < self.tool_pose_tolerance[j] for j in range(3,6)]
             # print([np.abs(actual_tool_pose[j] - tool_position[j]) for j in range(3)] + [min(np.abs(actual_tool_pose[j] - tool_orientation[j-3]), np.abs(np.abs(actual_tool_pose[j] - tool_orientation[j-3]) - np.pi*2)) for j in range(3,6)])
             tcp_state_data = self.tcp_socket.recv(2048)
-            prev_actual_tool_pose = np.asarray(actual_tool_pose).copy()
+            # prev_actual_tool_pose = np.asarray(actual_tool_pose).copy()
             actual_tool_pose = self.parse_tcp_state_data(tcp_state_data, 'cartesian_info')
             time.sleep(0.01)
         self.tcp_socket.close()

@@ -307,3 +307,31 @@ class CrossEntropyLoss2d(nn.Module):
 
     def forward(self, inputs, targets):
         return self.nll_loss(F.log_softmax(inputs, dim=1), targets)
+
+def get_mush_color_name(color):
+    color_space = np.asarray([[78.0, 121.0, 167.0],  # blue
+                             [89.0, 161.0, 79.0],  # green
+                             [156, 117, 95],  # brown
+                             [242, 142, 43],  # orange
+                             [237.0, 201.0, 72.0],  # yellow
+                             [186, 176, 172],  # gray
+                             [255.0, 87.0, 89.0],  # red
+                             [176, 122, 161],  # purple
+                             [118, 183, 178],  # cyan
+                             [255, 157, 167]]) / 255.0  # pink
+    
+    color_name = [
+        "blue",
+        "green",
+        "brown",
+        "orange",
+        "yellow",
+        "gray",
+        "red",
+        "purple",
+        "cyan",
+        "pink"
+    ]
+    distances = [sum(abs(x - y) for x, y in zip(color, stdcolor)) for stdcolor in color_space]
+    idx = np.argmin(distances)
+    return color_name[idx]

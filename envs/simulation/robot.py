@@ -2,6 +2,7 @@ import os
 import time
 
 import numpy as np
+import yaml
 
 import utils
 from . import vrep
@@ -27,10 +28,27 @@ class SimRobot(BaseRobot):
         # Read files in object mesh directory
         self.obj_mesh_dir = obj_mesh_dir
         self.num_obj = num_obj
-        self.mesh_list = os.listdir(self.obj_mesh_dir)
+        self.mesh_list = list(filter(lambda x: x.endswith('.obj'), os.listdir(self.obj_mesh_dir)))
+
+        try:
+            with open(os.path.join(obj_mesh_dir, 'blocks.yml')) as f:
+                yaml_dict = yaml.safe_load(f)
+            groups = yaml_dict['groups']
+            self.mesh_name = yaml_dict['names']
+            for obj in self.mesh_list:
+                if obj not in self.mesh_name.keys():
+                    raise Exception
+        except Exception:
+            print('Failed to read block names/groups')
+            exit(1)
 
         # Randomly choose objects to add to scene
-        self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
+        group_chosen = np.random.choice(groups, size=self.num_obj, replace=False)
+        self.obj_mesh_ind = np.array([self.mesh_list.index(np.random.choice(obj)) for obj in group_chosen])
+        # TODO
+        # handle <-> ind <-> obj -> name
+        # Just for debug
+        print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
         # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
 
         self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
@@ -62,6 +80,7 @@ class SimRobot(BaseRobot):
         # Setup virtual camera in simulation
         self.setup_sim_camera()
         self.object_handles = []
+        self.target_handle = None
 
         # Add objects to simulation environment
         self.add_objects()
@@ -169,8 +188,10 @@ class SimRobot(BaseRobot):
 
         return np.sum(key_nn_idx == np.asarray(range(self.num_obj)) % 4)
 
-    def check_goal_reached(self):
-        goal_reached = self.get_task_score() == self.num_obj
+    def check_goal_reached(self, handle):
+        # TODO
+        # goal_reached = self.get_task_score() == self.num_obj
+        goal_reached = self.target_handle == handle
         return goal_reached
 
     def get_obj_positions(self):
@@ -233,6 +254,16 @@ class SimRobot(BaseRobot):
         depth_img = depth_img * (zFar - zNear) + zNear
 
         return color_img, depth_img
+
+    def get_instruction(self):
+        # TODO
+        # add more template
+        instruction_template = "pick up the {color} {shape}."
+        ind = np.random.randint(0, self.num_obj)
+        color = utils.get_mush_color_name(self.obj_mesh_color[ind])
+        shape = np.random.choice(self.mesh_name[self.mesh_list[self.obj_mesh_ind[ind]]])
+        self.target_handle = self.object_handles[ind]
+        return instruction_template.format(color=color, shape=shape)
 
     def close_gripper(self, _async=False):
         gripper_motor_velocity = -0.5
@@ -335,9 +366,12 @@ class SimRobot(BaseRobot):
             object_positions = object_positions[:, 2]
             grasped_object_ind = np.argmax(object_positions)
             grasped_object_handle = self.object_handles[grasped_object_ind]
+
             vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
 
-        return grasp_success
+        # TODO:
+        # how to deal with picked up wrong object ?
+        return grasp_success and self.check_goal_reached(grasped_object_handle)
 
     def push(self, position, heightmap_rotation_angle, workspace_limits):
         print('Executing: push at (%f, %f, %f)' %
@@ -436,6 +470,7 @@ class SimRobot(BaseRobot):
 class TestRobot(SimRobot):
     def __init__(self, obj_mesh_dir, num_obj, workspace_limits, test_preset_file):
 
+        BaseRobot.__init__(workspace_limits)
         # Read files in object mesh directory
         self.obj_mesh_dir = obj_mesh_dir
         self.num_obj = num_obj
