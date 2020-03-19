@@ -8,15 +8,13 @@ import time
 import cv2
 import numpy as np
 import torch
-from torch.autograd import Variable
 from trainer import Trainer
 from logger import Logger
 import utils
 from envs.real.robot import RealRobot
 from envs.simulation.robot import SimRobot
 from envs.simulation.robot import TestRobot
-from logger import Logger
-from trainer import Trainer
+
 from utils.config import Config
 
 
@@ -155,7 +153,7 @@ def main(args):
                 # Initialize variables that influence reward
                 nonlocal_variables['push_success'] = False
                 nonlocal_variables['grasp_success'] = False
-                change_detected = False
+                # change_detected = False
 
                 # Execute primitive
                 if nonlocal_variables['primitive_action'] == 'push':
@@ -177,7 +175,7 @@ def main(args):
     # -------------------------------------------------------------
 
     prev_color_img = None
-    prev_depth_img = None
+    # prev_depth_img = None
     prev_color_heightmap = None
     prev_depth_heightmap = None
     prev_valid_depth_heightmap = None
@@ -194,15 +192,17 @@ def main(args):
         iteration_time_0 = time.time()
 
         # Make sure simulation is still stable (if not, reset simulation)
-        if args.is_sim: robot.check_sim()
+        if args.is_sim:
+            robot.check_sim()
 
         # Get latest RGB-D image
         color_img, depth_img = robot.get_camera_data()
         depth_img = depth_img * robot.cam_depth_scale  # Apply depth scale from calibration
 
         # Get heightmap from RGB-D image (by re-projecting 3D point cloud)
-        color_heightmap, depth_heightmap = utils.get_heightmap(color_img, depth_img, robot.cam_intrinsics, \
-											robot.cam_pose, args.workspace_limits, args.heightmap_resolution)
+        color_heightmap, depth_heightmap = utils.get_heightmap(
+            color_img, depth_img, robot.cam_intrinsics,
+            robot.cam_pose, args.workspace_limits, args.heightmap_resolution)
         valid_depth_heightmap = depth_heightmap.copy()
         valid_depth_heightmap[np.isnan(valid_depth_heightmap)] = 0
 
@@ -241,15 +241,15 @@ def main(args):
                 exit_called = True  # Exit after training thread (backprop and saving labels)
             continue
 
-        if not exit_called:  
-            ############################# forward ##################################
+        if not exit_called:
+            # ############################ forward ##################################
             #
             # add a instruction in trainer.forward
             #
             ########################################################################
             # Run forward pass with network to get affordances
             push_predictions, grasp_predictions, state_feat = trainer.forward(color_heightmap, valid_depth_heightmap, is_volatile=True)
-            ### ------- here -------
+            # ## ------- here -------
             # Execute best primitive action on robot in another thread
             nonlocal_variables['executing_action'] = True
 
@@ -270,33 +270,33 @@ def main(args):
             if change_detected:
                 no_change_count[args.ACTION_ID[prev_primitive_action]] = 0
                 # if prev_primitive_action == 'push':
-                    #no_change_count[0] = 0
-                #elif prev_primitive_action == 'grasp':
-                    #no_change_count[1] = 0
+                #    no_change_count[0] = 0
+                # elif prev_primitive_action == 'grasp':
+                #    no_change_count[1] = 0
             else:
                 no_change_count[args.ACTION_ID[prev_primitive_action]] += 1
-                #if prev_primitive_action == 'push':
+                # if prev_primitive_action == 'push':
                 #    no_change_count[0] += 1
-                #elif prev_primitive_action == 'grasp':
+                # elif prev_primitive_action == 'grasp':
                 #    no_change_count[1] += 1
 
             # Compute training labels
-            label_value, prev_reward_value = trainer.get_label_value(prev_primitive_action, 
-                prev_push_success, prev_grasp_success, change_detected, prev_push_predictions, 
-                prev_grasp_predictions, color_heightmap, valid_depth_heightmap)
+            label_value, prev_reward_value = trainer.get_label_value(
+                prev_primitive_action, prev_push_success, prev_grasp_success, change_detected,
+                prev_push_predictions, prev_grasp_predictions, color_heightmap, valid_depth_heightmap)
             trainer.label_value_log.append([label_value])
             logger.write_to_log('label-value', trainer.label_value_log)
             trainer.reward_value_log.append([prev_reward_value])
             logger.write_to_log('reward-value', trainer.reward_value_log)
 
             # Backpropagate
-            trainer.backprop(prev_color_heightmap, prev_valid_depth_heightmap, 
-                prev_primitive_action, prev_best_pix_ind, label_value)
+            trainer.backprop(prev_color_heightmap, prev_valid_depth_heightmap,
+                             prev_primitive_action, prev_best_pix_ind, label_value)
 
             # Adjust exploration probability
             if not args.is_testing:
                 if args.explore_rate_decay:
-                    explore_prob = max(0.5 * np.power(0.9998, trainer.iteration),0.1) 
+                    explore_prob = max(0.5 * np.power(0.9998, trainer.iteration), 0.1)
                 else:
                     explore_prob = 0.5
 
@@ -319,8 +319,8 @@ def main(args):
                 # Get samples of the same primitive but with different results
                 sample_ind = np.argwhere(
                     np.logical_and(
-                            np.asarray(trainer.reward_value_log)[1:trainer.iteration,0] == sample_reward_value, 
-                            np.asarray(trainer.executed_action_log)[1:trainer.iteration,0] == sample_primitive_action_id
+                            np.asarray(trainer.reward_value_log)[1:trainer.iteration, 0] == sample_reward_value,
+                            np.asarray(trainer.executed_action_log)[1:trainer.iteration, 0] == sample_primitive_action_id
                         )
                 )
 
@@ -377,7 +377,7 @@ def main(args):
 
         # Save information for next training step
         prev_color_img = color_img.copy()
-        prev_depth_img = depth_img.copy()
+        # prev_depth_img = depth_img.copy()
         prev_color_heightmap = color_heightmap.copy()
         prev_depth_heightmap = depth_heightmap.copy()
         prev_valid_depth_heightmap = valid_depth_heightmap.copy()
@@ -398,6 +398,6 @@ if __name__ == '__main__':
         description='Train robotic agents to learn visual language grasp.'
     )
     # Run main program with specified config file
-    parser.add_argument('-f', '--file', dest='file')  
+    parser.add_argument('-f', '--file', dest='file')
     args = parser.parse_args()
     main(Config(args.file))
