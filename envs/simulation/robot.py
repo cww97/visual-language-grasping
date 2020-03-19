@@ -366,11 +366,11 @@ class SimRobot(BaseRobot):
             object_positions = object_positions[:, 2]
             grasped_object_ind = np.argmax(object_positions)
             grasped_object_handle = self.object_handles[grasped_object_ind]
-                
+
             vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
 
         # TODO:
-        # how to deal with picked up wrong object ? 
+        # how to deal with picked up wrong object ?
         return grasp_success and self.check_goal_reached(grasped_object_handle)
 
     def push(self, position, heightmap_rotation_angle, workspace_limits):
