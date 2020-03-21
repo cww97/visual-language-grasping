@@ -211,24 +211,13 @@ class reactive_net(nn.Module):
                 ])
                 affine_mat_before.shape = (2, 3, 1)
                 affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
-                if self.use_cuda:
-                    flow_grid_before = F.affine_grid(
-                        Variable(affine_mat_before, requires_grad=False).cuda(),
-                        input_color_data.size()
-                    )
-                else:
-                    flow_grid_before = F.affine_grid(
-                        Variable(affine_mat_before, requires_grad=False),
-                        input_color_data.size()
-                    )
+
+                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(),
+                                                 input_color_data.size())
 
                 # Rotate images clockwise
-                if self.use_cuda:
-                    rotate_color = F.grid_sample(Variable(input_color_data).cuda(), flow_grid_before, mode='nearest')
-                    rotate_depth = F.grid_sample(Variable(input_depth_data).cuda(), flow_grid_before, mode='nearest')
-                else:
-                    rotate_color = F.grid_sample(Variable(input_color_data), flow_grid_before, mode='nearest')
-                    rotate_depth = F.grid_sample(Variable(input_depth_data), flow_grid_before, mode='nearest')
+                rotate_color = F.grid_sample(Variable(input_color_data).cuda(), flow_grid_before, mode='nearest')
+                rotate_depth = F.grid_sample(Variable(input_depth_data).cuda(), flow_grid_before, mode='nearest')
 
                 # Compute intermediate features
                 # interm_push_color_feat = self.push_color_trunk.features(rotate_color)
@@ -245,16 +234,10 @@ class reactive_net(nn.Module):
                                                [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
                 affine_mat_after.shape = (2, 3, 1)
                 affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
-                if self.use_cuda:
-                    flow_grid_after = F.affine_grid(
-                        Variable(affine_mat_after, requires_grad=False).cuda(),
-                        interm_grasp_feat.data.size()
-                    )
-                else:
-                    flow_grid_after = F.affine_grid(
-                        Variable(affine_mat_after, requires_grad=False),
-                        interm_grasp_feat.data.size()
-                    )
+                flow_grid_after = F.affine_grid(
+                    Variable(affine_mat_after, requires_grad=False).cuda(),
+                    interm_grasp_feat.data.size()
+                )
 
                 # add a lstm here
                 #

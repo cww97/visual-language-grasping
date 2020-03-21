@@ -1,5 +1,4 @@
 import os
-from collections import OrderedDict
 import numpy as np
 import cv2
 import torch
@@ -172,23 +171,45 @@ class Trainer(object):
             # Return affordances (and remove extra padding)
             for rotate_idx in range(len(output_prob)):
                 if rotate_idx == 0:
-                    push_predictions = F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[:, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2), (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
-                    grasp_predictions = F.softmax(output_prob[rotate_idx][1], dim=1).cpu().data.numpy()[:, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2), (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
+                    # push_predictions = F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[
+                    #   :, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),
+                    #  (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
+
+                    grasp_predictions = F.softmax(output_prob[rotate_idx][1], dim=1).cpu().data.numpy()[
+                        :, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),
+                        (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]
                 else:
-                    push_predictions = np.concatenate((push_predictions, F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[:, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2), (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]), axis=0)
-                    grasp_predictions = np.concatenate((grasp_predictions, F.softmax(output_prob[rotate_idx][1], dim=1).cpu().data.numpy()[:, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2), (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]), axis=0)
+                    # push_predictions = np.concatenate((
+                    #   push_predictions, F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[
+                    #      :, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),
+                    #     (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]), axis=0)
+                    grasp_predictions = np.concatenate((
+                        grasp_predictions, F.softmax(output_prob[rotate_idx][1], dim=1).cpu().data.numpy()[
+                            :, 0, (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2),
+                            (padding_width//2):(color_heightmap_2x.shape[0]//2 - padding_width//2)]), axis=0)
 
         elif self.method == 'reinforcement':
 
             # Return Q values (and remove extra padding)
             for rotate_idx in range(len(output_prob)):
                 if rotate_idx == 0:
-                    push_predictions = output_prob[rotate_idx][0].cpu().data.numpy()[:, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2), int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]
-                    grasp_predictions = output_prob[rotate_idx][1].cpu().data.numpy()[:, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2), int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]
+                    # push_predictions = output_prob[rotate_idx][0].cpu().data.numpy()[
+                    #    :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
+                    #    int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]
+                    grasp_predictions = output_prob[rotate_idx][1].cpu().data.numpy()[
+                        :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
+                        int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]
                 else:
-                    push_predictions = np.concatenate((push_predictions, output_prob[rotate_idx][0].cpu().data.numpy()[:, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2), int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]), axis=0)
-                    grasp_predictions = np.concatenate((grasp_predictions, output_prob[rotate_idx][1].cpu().data.numpy()[:, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2), int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]), axis=0)
+                    # push_predictions = np.concatenate((
+                    #    push_predictions, output_prob[rotate_idx][0].cpu().data.numpy()[
+                    #        :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
+                    #        int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]), axis=0)
+                    grasp_predictions = np.concatenate((
+                        grasp_predictions, output_prob[rotate_idx][1].cpu().data.numpy()[
+                            :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
+                            int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]), axis=0)
 
+        push_predictions = -1
         return push_predictions, grasp_predictions, state_feat
 
     def get_label_value(self, primitive_action, push_success, grasp_success, change_detected,
@@ -223,7 +244,8 @@ class Trainer(object):
             if not change_detected and not grasp_success:
                 future_reward = 0
             else:
-                next_push_predictions, next_grasp_predictions, next_state_feat = self.forward(next_color_heightmap, next_depth_heightmap, is_volatile=True)
+                next_push_predictions, next_grasp_predictions, next_state_feat = self.forward(
+                    next_color_heightmap, next_depth_heightmap, is_volatile=True)
                 future_reward = max(np.max(next_push_predictions), np.max(next_grasp_predictions))
 
                 # # Experiment: use Q differences
@@ -234,7 +256,8 @@ class Trainer(object):
             print('Current reward: %f' % (current_reward))
             print('Future reward: %f' % (future_reward))
             expected_reward = current_reward + self.future_reward_discount * future_reward
-            print('Expected reward: %f + %f x %f = %f' % (current_reward, self.future_reward_discount, future_reward, expected_reward))
+            print('Expected reward: %f + %f x %f = %f' % (current_reward, self.future_reward_discount,
+                                                          future_reward, expected_reward))
             return expected_reward, current_reward
 
     # Compute labels and backpropagate
@@ -259,35 +282,31 @@ class Trainer(object):
             self.optimizer.zero_grad()
             loss_value = 0
             if primitive_action == 'push':
-                # loss = self.push_criterion(self.model.output_prob[best_pix_ind[0]][0], Variable(torch.from_numpy(label).long().cuda()))
 
                 # Do forward pass with specified rotation (to save gradients)
-                push_predictions, grasp_predictions, state_feat = self.forward(color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
+                push_predictions, grasp_predictions, state_feat = self.forward(
+                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
 
-                if self.use_cuda:
-                    loss = self.push_criterion(self.model.output_prob[0][0], Variable(torch.from_numpy(label).long().cuda()))
-                else:
-                    loss = self.push_criterion(self.model.output_prob[0][0], Variable(torch.from_numpy(label).long()))
+                loss = self.push_criterion(
+                    self.model.output_prob[0][0],
+                    Variable(torch.from_numpy(label).long().cuda())
+                )
                 loss.backward()
-                # loss_value = loss.cpu().data.numpy()[0] Commented because the result could be 0 dimensional. Next try/catch will solve that
                 try:
                     loss_value = loss.cpu().data.numpy()[0]
                 except ValueError:
                     loss_value = loss.cpu().data.numpy()
 
             elif primitive_action == 'grasp':
-                # loss = self.grasp_criterion(self.model.output_prob[best_pix_ind[0]][1], Variable(torch.from_numpy(label).long().cuda()))
-                # loss += self.grasp_criterion(self.model.output_prob[(best_pix_ind[0] + self.model.num_rotations/2) % self.model.num_rotations][1], Variable(torch.from_numpy(label).long().cuda()))
-
                 # Do forward pass with specified rotation (to save gradients)
-                push_predictions, grasp_predictions, state_feat = self.forward(color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
+                push_predictions, grasp_predictions, state_feat = self.forward(
+                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
 
                 if self.use_cuda:
                     loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
                 else:
                     loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long()))
                 loss.backward()
-                # loss_value += loss.cpu().data.numpy()[0] Commented because the result could be 0 dimensional. Next try/catch will solve that
                 try:
                     loss_value += loss.cpu().data.numpy()[0]
                 except ValueError:  # ?
@@ -296,14 +315,11 @@ class Trainer(object):
                 # Since grasping is symmetric, train with another forward pass of opposite rotation angle
                 opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations/2) % self.model.num_rotations
 
-                push_predictions, grasp_predictions, state_feat = self.forward(color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=opposite_rotate_idx)
+                push_predictions, grasp_predictions, state_feat = self.forward(
+                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=opposite_rotate_idx)
 
-                if self.use_cuda:
-                    loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
-                else:
-                    loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long()))
+                loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
                 loss.backward()
-                # loss_value += loss.cpu().data.numpy()[0] Commented because the result could be 0 dimensional. Next try/catch will solve that
                 try:
                     loss_value += loss.cpu().data.numpy()[0]
                 except ValueError:
@@ -338,15 +354,14 @@ class Trainer(object):
             if primitive_action == 'push':
 
                 # Do forward pass with specified rotation (to save gradients)
-                push_predictions, grasp_predictions, state_feat = self.forward(color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
+                push_predictions, grasp_predictions, state_feat = self.forward(
+                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
 
-                if self.use_cuda:
-                    loss = self.criterion(self.model.output_prob[0][0].view(1, 320, 320), Variable(torch.from_numpy(label).float().cuda())) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-                else:
-                    loss = self.criterion(self.model.output_prob[0][0].view(1, 320, 320), Variable(torch.from_numpy(label).float())) * Variable(torch.from_numpy(label_weights).float(), requires_grad=False)
+                loss = self.criterion(self.model.output_prob[0][0].view(1, 320, 320),
+                                      Variable(torch.from_numpy(label).float().cuda())) * Variable(
+                        torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
                 loss = loss.sum()
                 loss.backward()
-                # loss_value = loss.cpu().data.numpy()[0] Commented because the result could be 0 dimensional. Next try/catch will solve that
                 try:
                     loss_value = loss.cpu().data.numpy()[0]
                 except ValueError:
@@ -355,15 +370,14 @@ class Trainer(object):
             elif primitive_action == 'grasp':
 
                 # Do forward pass with specified rotation (to save gradients)
-                push_predictions, grasp_predictions, state_feat = self.forward(color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
+                push_predictions, grasp_predictions, state_feat = self.forward(
+                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
 
-                if self.use_cuda:
-                    loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320), Variable(torch.from_numpy(label).float().cuda())) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-                else:
-                    loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320), Variable(torch.from_numpy(label).float())) * Variable(torch.from_numpy(label_weights).float(), requires_grad=False)
+                loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320),
+                                      Variable(torch.from_numpy(label).float().cuda())) * Variable(
+                                          torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
                 loss = loss.sum()
                 loss.backward()
-                # loss_value = loss.cpu().data.numpy()[0] Commented because the result could be 0 dimensional. Next try/catch will solve that
                 try:
                     loss_value = loss.cpu().data.numpy()[0]
                 except ValueError:
@@ -371,16 +385,15 @@ class Trainer(object):
 
                 opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations/2) % self.model.num_rotations
 
-                push_predictions, grasp_predictions, state_feat = self.forward(color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=opposite_rotate_idx)
+                push_predictions, grasp_predictions, state_feat = self.forward(
+                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=opposite_rotate_idx)
 
-                if self.use_cuda:
-                    loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320), Variable(torch.from_numpy(label).float().cuda())) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-                else:
-                    loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320), Variable(torch.from_numpy(label).float())) * Variable(torch.from_numpy(label_weights).float(), requires_grad=False)
+                loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320),
+                                      Variable(torch.from_numpy(label).float().cuda())) * Variable(
+                                        torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
 
                 loss = loss.sum()
                 loss.backward()
-                # loss_value = loss.cpu().data.numpy()[0] Commented because the result could be 0 dimensional. Next try/catch will solve that
                 try:
                     loss_value = loss.cpu().data.numpy()[0]
                 except ValueError:
@@ -406,7 +419,9 @@ class Trainer(object):
                 prediction_vis.shape = (predictions.shape[1], predictions.shape[2])
                 prediction_vis = cv2.applyColorMap((prediction_vis*255).astype(np.uint8), cv2.COLORMAP_JET)
                 if rotate_idx == best_pix_ind[0]:
-                    prediction_vis = cv2.circle(prediction_vis, (int(best_pix_ind[2]), int(best_pix_ind[1])), 7, (0, 0, 255), 2)
+                    prediction_vis = cv2.circle(
+                        prediction_vis, (int(best_pix_ind[2]), int(best_pix_ind[1])), 7, (0, 0, 255), 2
+                    )
                 prediction_vis = ndimage.rotate(prediction_vis, rotate_idx*(360.0/num_rotations), reshape=False, order=0)
                 background_image = ndimage.rotate(color_heightmap, rotate_idx*(360.0/num_rotations), reshape=False, order=0)
                 prediction_vis = (0.5*cv2.cvtColor(background_image, cv2.COLOR_RGB2BGR) + 0.5*prediction_vis).astype(np.uint8)
@@ -450,7 +465,10 @@ class Trainer(object):
         for rotate_idx in range(num_rotations):
             rotated_heightmap = ndimage.rotate(depth_heightmap, rotate_idx*(360.0/num_rotations), reshape=False, order=0)
             valid_areas = np.zeros(rotated_heightmap.shape)
-            valid_areas[np.logical_and(rotated_heightmap - ndimage.interpolation.shift(rotated_heightmap, [0, -25], order=0) > 0.02, rotated_heightmap - ndimage.interpolation.shift(rotated_heightmap, [0, 25], order=0) > 0.02)] = 1
+            valid_areas[np.logical_and(
+                    rotated_heightmap - ndimage.interpolation.shift(rotated_heightmap, [0, -25], order=0) > 0.02,
+                    rotated_heightmap - ndimage.interpolation.shift(rotated_heightmap, [0, 25], order=0) > 0.02
+            )] = 1
             # valid_areas = np.multiply(valid_areas, rotated_heightmap)
             blur_kernel = np.ones((25, 25), np.float32)/9
             valid_areas = cv2.filter2D(valid_areas, -1, blur_kernel)
