@@ -9,6 +9,11 @@ from utils import CrossEntropyLoss2d
 from models import reactive_net, reinforcement_net
 from scipy import ndimage
 
+CUDA_CHECK_OUTPUT = (
+    "CUDA is *NOT* detected. Running with only CPU :(.",  # 0
+    "CUDA detected. Running with GPU acceleration  :).",  # 1
+)
+
 
 class Trainer(object):
 
@@ -16,18 +21,15 @@ class Trainer(object):
                  is_testing, load_snapshot, snapshot_file):
         self.method = method
         # Check if CUDA can be used
-        if torch.cuda.is_available():
-            print("CUDA detected. Running with GPU acceleration.")
-            self.use_cuda = True
-        else:
-            print("CUDA is *NOT* detected. Running with only CPU.")
-            self.use_cuda = False
+        self.use_cuda = torch.cuda.is_available()
+        print(CUDA_CHECK_OUTPUT[int(self.use_cuda)])
 
         # Fully convolutional classification network for supervised learning
         if self.method == 'reactive':
             self.model = reactive_net(self.use_cuda)
 
             # Initialize classification loss
+            '''
             push_num_classes = 3  # 0 - push, 1 - no change push, 2 - no loss
             push_class_weights = torch.ones(push_num_classes)
             push_class_weights[push_num_classes - 1] = 0
@@ -35,6 +37,7 @@ class Trainer(object):
                 self.push_criterion = CrossEntropyLoss2d(push_class_weights.cuda()).cuda()
             else:
                 self.push_criterion = CrossEntropyLoss2d(push_class_weights)
+            '''
             grasp_num_classes = 3  # 0 - grasp, 1 - failed grasp, 2 - no loss
             grasp_class_weights = torch.ones(grasp_num_classes)
             grasp_class_weights[grasp_num_classes - 1] = 0
@@ -50,7 +53,7 @@ class Trainer(object):
             self.future_reward_discount = future_reward_discount
 
             # Initialize Huber loss
-            self.criterion = torch.nn.SmoothL1Loss(reduce=False)  # Huber loss
+            self.criterion = torch.nn.SmoothL1Loss(reduce=False)  # Huber losss
             if self.use_cuda:
                 self.criterion = self.criterion.cuda()
 
@@ -58,13 +61,10 @@ class Trainer(object):
         if load_snapshot:
             # PyTorch v0.4 removes periods in state dict keys, but no backwards compatibility :(
             loaded_snapshot_state_dict = torch.load(snapshot_file)
-            loaded_snapshot_state_dict = OrderedDict([(k.replace('conv.1', 'conv1'), v) if k.find('conv.1') else (k, v) for k, v in loaded_snapshot_state_dict.items()])
-            loaded_snapshot_state_dict = OrderedDict([(k.replace('norm.1', 'norm1'), v) if k.find('norm.1') else (k, v) for k, v in loaded_snapshot_state_dict.items()])
-            loaded_snapshot_state_dict = OrderedDict([(k.replace('conv.2', 'conv2'), v) if k.find('conv.2') else (k, v) for k, v in loaded_snapshot_state_dict.items()])
-            loaded_snapshot_state_dict = OrderedDict([(k.replace('norm.2', 'norm2'), v) if k.find('norm.2') else (k, v) for k, v in loaded_snapshot_state_dict.items()])
+            items = ('conv.1', 'norm.1', 'conv.2', 'norm.2')
+            for item in items:
+                self.loaded_snapshot_item(loaded_snapshot_state_dict, item)
             self.model.load_state_dict(loaded_snapshot_state_dict)
-
-            # self.model.load_state_dict(torch.load(snapshot_file)) # Old loading command pre v0.4
 
             print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
 

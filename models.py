@@ -120,7 +120,7 @@ class AttnDecoderLSTM(nn.Module):
         self.hidden_size = hidden_size
         self.embedding = nn.Embedding(input_action_size, embedding_size)
         self.drop = nn.Dropout(p=dropout_ratio)
-        self.lstm = nn.LSTMCell(embedding_size+feature_size, hidden_size)
+        self.lstm = nn.LSTMCell(embedding_size + feature_size, hidden_size)
         self.attention_layer = SoftDotAttention(hidden_size)
         self.decoder2action = nn.Linear(hidden_size, output_action_size)
 
@@ -152,14 +152,15 @@ class reactive_net(nn.Module):
         self.use_cuda = use_cuda
 
         # Initialize network trunks with DenseNet pre-trained on ImageNet
-        self.push_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
-        self.push_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
+        # self.push_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
+        # self.push_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
 
         self.num_rotations = 16
 
         # Construct network branches for pushing and grasping
+        '''
         self.pushnet = nn.Sequential(OrderedDict([
             ('push-norm0', nn.BatchNorm2d(2048)),
             ('push-relu0', nn.ReLU(inplace=True)),
@@ -168,7 +169,7 @@ class reactive_net(nn.Module):
             ('push-relu1', nn.ReLU(inplace=True)),
             ('push-conv1', nn.Conv2d(64, 3, kernel_size=1, stride=1, bias=False))
             # ('push-upsample2', nn.Upsample(scale_factor=4, mode='bilinear'))
-        ]))
+        ]))'''
         self.graspnet = nn.Sequential(OrderedDict([
             ('grasp-norm0', nn.BatchNorm2d(2048)),
             ('grasp-relu0', nn.ReLU(inplace=True)),
@@ -194,23 +195,32 @@ class reactive_net(nn.Module):
 
     def forward(self, input_color_data, input_depth_data, is_volatile=False, specific_rotation=-1):
 
-        if is_volatile:
+        if is_volatile:  # try every rotate angle
             torch.set_grad_enabled(False)
             output_prob = []
             interm_feat = []
 
             # Apply rotations to images
             for rotate_idx in range(self.num_rotations):
-                rotate_theta = np.radians(rotate_idx*(360/self.num_rotations))
+                rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
 
                 # Compute sample grid for rotation BEFORE neural network
-                affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0], [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
+                affine_mat_before = np.asarray([
+                    [np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
+                    [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]
+                ])
                 affine_mat_before.shape = (2, 3, 1)
                 affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
                 if self.use_cuda:
-                    flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(), input_color_data.size())
+                    flow_grid_before = F.affine_grid(
+                        Variable(affine_mat_before, requires_grad=False).cuda(),
+                        input_color_data.size()
+                    )
                 else:
-                    flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False), input_color_data.size())
+                    flow_grid_before = F.affine_grid(
+                        Variable(affine_mat_before, requires_grad=False),
+                        input_color_data.size()
+                    )
 
                 # Rotate images clockwise
                 if self.use_cuda:
@@ -221,13 +231,14 @@ class reactive_net(nn.Module):
                     rotate_depth = F.grid_sample(Variable(input_depth_data), flow_grid_before, mode='nearest')
 
                 # Compute intermediate features
-                interm_push_color_feat = self.push_color_trunk.features(rotate_color)
-                interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
-                interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
+                # interm_push_color_feat = self.push_color_trunk.features(rotate_color)
+                # interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
+                # interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
                 interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
                 interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
                 interm_grasp_feat = torch.cat((interm_grasp_color_feat, interm_grasp_depth_feat), dim=1)
-                interm_feat.append([interm_push_feat, interm_grasp_feat])
+                # interm_feat.append([interm_push_feat, interm_grasp_feat])
+                interm_feat.append([interm_grasp_feat])
 
                 # Compute sample grid for rotation AFTER branches
                 affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0],
@@ -235,16 +246,22 @@ class reactive_net(nn.Module):
                 affine_mat_after.shape = (2, 3, 1)
                 affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
                 if self.use_cuda:
-                    flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(), interm_push_feat.data.size())
+                    flow_grid_after = F.affine_grid(
+                        Variable(affine_mat_after, requires_grad=False).cuda(),
+                        interm_grasp_feat.data.size()
+                    )
                 else:
-                    flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False), interm_push_feat.data.size())
+                    flow_grid_after = F.affine_grid(
+                        Variable(affine_mat_after, requires_grad=False),
+                        interm_grasp_feat.data.size()
+                    )
 
                 # add a lstm here
                 #
                 # Forward pass through branches, undo rotation on output predictions, upsample results
                 output_prob.append([
-                    nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
-                    .forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
+                    # nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+                    # .forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
                     nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
                     .forward(F.grid_sample(self.graspnet(interm_grasp_feat), flow_grid_after, mode='nearest'))
                 ])
@@ -259,42 +276,53 @@ class reactive_net(nn.Module):
             # Apply rotations to intermediate features
             # for rotate_idx in range(self.num_rotations):
             rotate_idx = specific_rotation
-            rotate_theta = np.radians(rotate_idx*(360/self.num_rotations))
+            rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
 
             # Compute sample grid for rotation BEFORE branches
-            affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0], [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
+            affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
+                                            [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
             affine_mat_before.shape = (2, 3, 1)
             affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
             if self.use_cuda:
-                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(), input_color_data.size())
+                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(),
+                                                 input_color_data.size())
             else:
-                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False), input_color_data.size())
+                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False),
+                                                 input_color_data.size())
 
             # Rotate images clockwise
             if self.use_cuda:
-                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False).cuda(), flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False).cuda(), flow_grid_before, mode='nearest')
+                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False).cuda(),
+                                             flow_grid_before, mode='nearest')
+                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False).cuda(),
+                                             flow_grid_before, mode='nearest')
             else:
-                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False), flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False), flow_grid_before, mode='nearest')
+                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False),
+                                             flow_grid_before, mode='nearest')
+                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False),
+                                             flow_grid_before, mode='nearest')
 
             # Compute intermediate features
-            interm_push_color_feat = self.push_color_trunk.features(rotate_color)
-            interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
-            interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
+            # interm_push_color_feat = self.push_color_trunk.features(rotate_color)
+            # interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
+            # interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
             interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
             interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
             interm_grasp_feat = torch.cat((interm_grasp_color_feat, interm_grasp_depth_feat), dim=1)
-            self.interm_feat.append([interm_push_feat, interm_grasp_feat])
+            # self.interm_feat.append([interm_push_feat, interm_grasp_feat])
+            self.interm_feat.append([interm_grasp_feat])
 
             # Compute sample grid for rotation AFTER branches
-            affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0], [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
+            affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0],
+                                           [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
             affine_mat_after.shape = (2, 3, 1)
             affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
             if self.use_cuda:
-                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(), interm_push_feat.data.size())
+                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(),
+                                                interm_grasp_feat.data.size())
             else:
-                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False), interm_push_feat.data.size())
+                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False),
+                                                interm_grasp_feat.data.size())
 
             # add a LSTMencoder here
             #
@@ -303,8 +331,8 @@ class reactive_net(nn.Module):
             #
             #
             self.output_prob.append([
-                nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
-                .forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
+                # nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+                # .forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
                 nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
                 .forward(F.grid_sample(self.graspnet(interm_grasp_feat), flow_grid_after, mode='nearest'))
             ])
@@ -319,14 +347,15 @@ class reinforcement_net(nn.Module):
         self.use_cuda = use_cuda
 
         # Initialize network trunks with DenseNet pre-trained on ImageNet
-        self.push_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
-        self.push_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
+        # self.push_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
+        # self.push_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
 
         self.num_rotations = 16
 
         # Construct network branches for pushing and grasping
+        '''
         self.pushnet = nn.Sequential(OrderedDict([
             ('push-norm0', nn.BatchNorm2d(2048)),
             ('push-relu0', nn.ReLU(inplace=True)),
@@ -335,7 +364,7 @@ class reinforcement_net(nn.Module):
             ('push-relu1', nn.ReLU(inplace=True)),
             ('push-conv1', nn.Conv2d(64, 1, kernel_size=1, stride=1, bias=False))
             # ('push-upsample2', nn.Upsample(scale_factor=4, mode='bilinear'))
-        ]))
+        ]))'''
         self.graspnet = nn.Sequential(OrderedDict([
             ('grasp-norm0', nn.BatchNorm2d(2048)),
             ('grasp-relu0', nn.ReLU(inplace=True)),
@@ -368,16 +397,19 @@ class reinforcement_net(nn.Module):
 
             # Apply rotations to images
             for rotate_idx in range(self.num_rotations):
-                rotate_theta = np.radians(rotate_idx*(360/self.num_rotations))
+                rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
 
                 # Compute sample grid for rotation BEFORE neural network
-                affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0], [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
+                affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
+                                                [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
                 affine_mat_before.shape = (2, 3, 1)
                 affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
                 if self.use_cuda:
-                    flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(), input_color_data.size())
+                    flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(),
+                                                     input_color_data.size())
                 else:
-                    flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False), input_color_data.size())
+                    flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False),
+                                                     input_color_data.size())
 
                 # Rotate images clockwise
                 if self.use_cuda:
@@ -388,26 +420,34 @@ class reinforcement_net(nn.Module):
                     rotate_depth = F.grid_sample(Variable(input_depth_data), flow_grid_before, mode='nearest')
 
                 # Compute intermediate features
-                interm_push_color_feat = self.push_color_trunk.features(rotate_color)
-                interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
-                interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
+                # interm_push_color_feat = self.push_color_trunk.features(rotate_color)
+                # interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
+                # interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
                 interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
                 interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
                 interm_grasp_feat = torch.cat((interm_grasp_color_feat, interm_grasp_depth_feat), dim=1)
-                interm_feat.append([interm_push_feat, interm_grasp_feat])
+                # interm_feat.append([interm_push_feat, interm_grasp_feat])
+                interm_feat.append([interm_grasp_feat])
 
                 # Compute sample grid for rotation AFTER branches
-                affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0], [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
+                affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0],
+                                               [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
                 affine_mat_after.shape = (2, 3, 1)
                 affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
                 if self.use_cuda:
-                    flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(), interm_push_feat.data.size())
+                    flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(),
+                                                    interm_grasp_feat.data.size())
                 else:
-                    flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False), interm_push_feat.data.size())
+                    flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False),
+                                                    interm_grasp_feat.data.size())
 
                 # Forward pass through branches, undo rotation on output predictions, upsample results
-                output_prob.append([nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True).forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
-                                    nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True).forward(F.grid_sample(self.graspnet(interm_grasp_feat), flow_grid_after, mode='nearest'))])
+                output_prob.append([
+                    # nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+                    # .forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
+                    nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+                    .forward(F.grid_sample(self.graspnet(interm_grasp_feat), flow_grid_after, mode='nearest'))
+                ])
 
             torch.set_grad_enabled(True)
             return output_prob, interm_feat
@@ -419,45 +459,59 @@ class reinforcement_net(nn.Module):
             # Apply rotations to intermediate features
             # for rotate_idx in range(self.num_rotations):
             rotate_idx = specific_rotation
-            rotate_theta = np.radians(rotate_idx*(360/self.num_rotations))
+            rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
 
             # Compute sample grid for rotation BEFORE branches
-            affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0], [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
+            affine_mat_before = np.asarray([[np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
+                                            [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]])
             affine_mat_before.shape = (2, 3, 1)
             affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
             if self.use_cuda:
-                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False).cuda(), input_color_data.size())
+                flow_grid_before = F.affine_grid(
+                    Variable(affine_mat_before, requires_grad=False).cuda(), input_color_data.size())
             else:
-                flow_grid_before = F.affine_grid(Variable(affine_mat_before, requires_grad=False), input_color_data.size())
+                flow_grid_before = F.affine_grid(
+                    Variable(affine_mat_before, requires_grad=False), input_color_data.size())
 
             # Rotate images clockwise
             if self.use_cuda:
-                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False).cuda(), flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False).cuda(), flow_grid_before, mode='nearest')
+                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False).cuda(),
+                                             flow_grid_before, mode='nearest')
+                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False).cuda(),
+                                             flow_grid_before, mode='nearest')
             else:
-                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False), flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False), flow_grid_before, mode='nearest')
+                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False),
+                                             flow_grid_before, mode='nearest')
+                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False),
+                                             flow_grid_before, mode='nearest')
 
             # Compute intermediate features
-            interm_push_color_feat = self.push_color_trunk.features(rotate_color)
-            interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
-            interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
+            # interm_push_color_feat = self.push_color_trunk.features(rotate_color)
+            # interm_push_depth_feat = self.push_depth_trunk.features(rotate_depth)
+            # interm_push_feat = torch.cat((interm_push_color_feat, interm_push_depth_feat), dim=1)
             interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
             interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
             interm_grasp_feat = torch.cat((interm_grasp_color_feat, interm_grasp_depth_feat), dim=1)
-            self.interm_feat.append([interm_push_feat, interm_grasp_feat])
+            # self.interm_feat.append([interm_push_feat, interm_grasp_feat])
+            self.interm_feat.append([interm_grasp_feat])
 
             # Compute sample grid for rotation AFTER branches
-            affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0], [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
+            affine_mat_after = np.asarray([[np.cos(rotate_theta), np.sin(rotate_theta), 0],
+                                           [-np.sin(rotate_theta), np.cos(rotate_theta), 0]])
             affine_mat_after.shape = (2, 3, 1)
             affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
             if self.use_cuda:
-                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(), interm_push_feat.data.size())
+                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(),
+                                                interm_grasp_feat.data.size())
             else:
-                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False), interm_push_feat.data.size())
+                flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False), interm_grasp_feat.data.size())
 
             # Forward pass through branches, undo rotation on output predictions, upsample results
-            self.output_prob.append([nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True).forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
-                                     nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True).forward(F.grid_sample(self.graspnet(interm_grasp_feat), flow_grid_after, mode='nearest'))])
+            self.output_prob.append([
+                # nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+                # .forward(F.grid_sample(self.pushnet(interm_push_feat), flow_grid_after, mode='nearest')),
+                nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+                .forward(F.grid_sample(self.graspnet(interm_grasp_feat), flow_grid_after, mode='nearest'))
+            ])
 
             return self.output_prob, self.interm_feat
