@@ -46,13 +46,11 @@ def main(args):
 
     # Initialize variables for heuristic bootstrapping and exploration probability
     no_change_count = [2, 2] if not args.is_testing else [0, 0]
-    explore_prob = 0.5 if not args.is_testing else 0.0
 
     # Quick hack for nonlocal memory between threads in Python 2
     nonlocal_variables = {'executing_action': False,
                           'primitive_action': None,
                           'best_pix_ind': None,
-                          'push_success': False,
                           'grasp_success': False}
 
     # Parallel thread to process network output and execute actions
@@ -62,38 +60,17 @@ def main(args):
         while True:
             if nonlocal_variables['executing_action']:
 
-                # Determine whether grasping or pushing should be executed based on network predictions
-                best_push_conf = np.max(push_predictions)
                 best_grasp_conf = np.max(grasp_predictions)
-                print('Primitive confidence scores: %f (push), %f (grasp)' % (best_push_conf, best_grasp_conf))
+                print('Primitive confidence scores: %f (grasp)' % (best_grasp_conf))
                 nonlocal_variables['primitive_action'] = 'grasp'
                 explore_actions = False
-                if not args.grasp_only:
-                    if args.is_testing and args.method == 'reactive':
-                        if best_push_conf > 2 * best_grasp_conf:
-                            nonlocal_variables['primitive_action'] = 'push'
-                    else:
-                        if best_push_conf > best_grasp_conf:
-                            nonlocal_variables['primitive_action'] = 'push'
-                    explore_actions = np.random.uniform() < explore_prob
-                    if explore_actions:  # Exploitation (do best action) vs exploration (do other action)
-                        print('Strategy: explore (exploration probability: %f)' % (explore_prob))
-                        nonlocal_variables['primitive_action'] = 'push' if np.random.randint(0, 2) == 0 else 'grasp'
-                    else:
-                        print('Strategy: exploit (exploration probability: %f)' % (explore_prob))
                 trainer.is_exploit_log.append([0 if explore_actions else 1])
                 logger.write_to_log('is-exploit', trainer.is_exploit_log)
 
                 # If heuristic bootstrapping is enabled: if change has not been detected more than 2 times,
-                # execute heuristic algorithm to detect grasps/pushes
+                # execute heuristic algorithm to detect grasps
                 # NOTE: typically not necessary and can reduce final performance.
-                if args.heuristic_bootstrap and nonlocal_variables['primitive_action'] == 'push' and no_change_count[0] >= 2:
-                    print('Change not detected for more than two pushes. Running heuristic pushing.')
-                    nonlocal_variables['best_pix_ind'] = trainer.push_heuristic(valid_depth_heightmap)
-                    no_change_count[0] = 0
-                    predicted_value = push_predictions[nonlocal_variables['best_pix_ind']]
-                    use_heuristic = True
-                elif args.heuristic_bootstrap and nonlocal_variables['primitive_action'] == 'grasp' and no_change_count[1] >= 2:
+                if args.heuristic_bootstrap and nonlocal_variables['primitive_action'] == 'grasp' and no_change_count[1] >= 2:
                     print('Change not detected for more than two grasps. Running heuristic grasping.')
                     nonlocal_variables['best_pix_ind'] = trainer.grasp_heuristic(valid_depth_heightmap)
                     no_change_count[1] = 0
@@ -104,11 +81,7 @@ def main(args):
 
                     # Get pixel location and rotation with highest affordance
                     # prediction from heuristic algorithms (rotation, y, x)
-                    if nonlocal_variables['primitive_action'] == 'push':
-                        nonlocal_variables['best_pix_ind'] = np.unravel_index(
-                            np.argmax(push_predictions), push_predictions.shape)
-                        predicted_value = np.max(push_predictions)
-                    elif nonlocal_variables['primitive_action'] == 'grasp':
+                    if nonlocal_variables['primitive_action'] == 'grasp':
                         nonlocal_variables['best_pix_ind'] = np.unravel_index(
                             np.argmax(grasp_predictions), grasp_predictions.shape)
                         predicted_value = np.max(grasp_predictions)
@@ -134,62 +107,33 @@ def main(args):
                     valid_depth_heightmap[best_pix_y][best_pix_x] + args.workspace_limits[2][0]
                 ]
 
-                # If pushing, adjust start position, and make sure z value is safe and not too low
-                if nonlocal_variables['primitive_action'] == 'push':  # or nonlocal_variables['primitive_action'] == 'place':
-                    finger_width = 0.02
-                    safe_kernel_width = int(np.round((finger_width / 2) / args.heightmap_resolution))
-                    local_region = valid_depth_heightmap[
-                        max(best_pix_y - safe_kernel_width, 0):
-                        min(best_pix_y + safe_kernel_width + 1, valid_depth_heightmap.shape[0]),
-                        max(best_pix_x - safe_kernel_width, 0):
-                        min(best_pix_x + safe_kernel_width + 1, valid_depth_heightmap.shape[1])
-                    ]
-                    if local_region.size == 0:
-                        safe_z_position = args.workspace_limits[2][0]
-                    else:
-                        safe_z_position = np.max(local_region) + args.workspace_limits[2][0]
-                    primitive_position[2] = safe_z_position
-
                 # Save executed primitive
-                if nonlocal_variables['primitive_action'] == 'push':
-                    trainer.executed_action_log.append([
-                        0, nonlocal_variables['best_pix_ind'][0],
-                        nonlocal_variables['best_pix_ind'][1],
-                        nonlocal_variables['best_pix_ind'][2]
-                    ])  # 0 - push
-                elif nonlocal_variables['primitive_action'] == 'grasp':
-                    trainer.executed_action_log.append([
-                        1, nonlocal_variables['best_pix_ind'][0],
-                        nonlocal_variables['best_pix_ind'][1],
-                        nonlocal_variables['best_pix_ind'][2]
-                    ])  # 1 - grasp
+
+                # if nonlocal_variables['primitive_action'] == 'grasp':
+                trainer.executed_action_log.append([
+                    1, nonlocal_variables['best_pix_ind'][0],
+                    nonlocal_variables['best_pix_ind'][1],
+                    nonlocal_variables['best_pix_ind'][2]
+                ])  # 1 - grasp
                 logger.write_to_log('executed-action', trainer.executed_action_log)
 
                 # Visualize executed primitive, and affordances
                 if args.save_visualizations:
-                    push_pred_vis = trainer.get_prediction_vis(
-                        push_predictions, color_heightmap, nonlocal_variables['best_pix_ind'])
-                    logger.save_visualizations(trainer.iteration, push_pred_vis, 'push')
-                    cv2.imwrite('visualization.push.png', push_pred_vis)
                     grasp_pred_vis = trainer.get_prediction_vis(
                         grasp_predictions, color_heightmap, nonlocal_variables['best_pix_ind'])
                     logger.save_visualizations(trainer.iteration, grasp_pred_vis, 'grasp')
                     cv2.imwrite('visualization.grasp.png', grasp_pred_vis)
 
                 # Initialize variables that influence reward
-                nonlocal_variables['push_success'] = False
+                # nonlocal_variables['push_success'] = False
                 nonlocal_variables['grasp_success'] = False
                 # change_detected = False
 
                 # Execute primitive
-                if nonlocal_variables['primitive_action'] == 'push':
-                    nonlocal_variables['push_success'] = robot.push(
-                        primitive_position, best_rotation_angle, args.workspace_limits)
-                    print('Push successful: %r' % (nonlocal_variables['push_success']))
-                elif nonlocal_variables['primitive_action'] == 'grasp':
-                    nonlocal_variables['grasp_success'] = robot.grasp(
-                        primitive_position, best_rotation_angle, args.workspace_limits)
-                    print('Grasp successful: %r' % (nonlocal_variables['grasp_success']))
+                # if nonlocal_variables['primitive_action'] == 'grasp':
+                nonlocal_variables['grasp_success'] = robot.grasp(
+                    primitive_position, best_rotation_angle, args.workspace_limits)
+                print('Grasp successful: %r' % (nonlocal_variables['grasp_success']))
 
                 nonlocal_variables['executing_action'] = False
 
@@ -207,10 +151,8 @@ def main(args):
     prev_color_heightmap = None
     prev_depth_heightmap = None
     prev_valid_depth_heightmap = None
-    prev_push_success = None
     prev_grasp_success = None
     prev_primitive_action = None
-    prev_push_predictions = None
     prev_grasp_predictions = None
     prev_best_pix_ind = None
 
@@ -299,21 +241,20 @@ def main(args):
 
             if change_detected:
                 no_change_count[args.ACTION_ID[prev_primitive_action]] = 0
-                # if prev_primitive_action == 'push':
-                #    no_change_count[0] = 0
-                # elif prev_primitive_action == 'grasp':
-                #    no_change_count[1] = 0
             else:
                 no_change_count[args.ACTION_ID[prev_primitive_action]] += 1
-                # if prev_primitive_action == 'push':
-                #    no_change_count[0] += 1
-                # elif prev_primitive_action == 'grasp':
-                #    no_change_count[1] += 1
 
             # Compute training labels
             label_value, prev_reward_value = trainer.get_label_value(
-                prev_primitive_action, prev_push_success, prev_grasp_success, change_detected,
-                prev_push_predictions, prev_grasp_predictions, color_heightmap, valid_depth_heightmap)
+                prev_primitive_action,
+                # prev_push_success,
+                prev_grasp_success,
+                change_detected,
+                # prev_push_predictions,
+                prev_grasp_predictions,
+                color_heightmap,
+                valid_depth_heightmap
+            )
             trainer.label_value_log.append([label_value])
             logger.write_to_log('label-value', trainer.label_value_log)
             trainer.reward_value_log.append([prev_reward_value])
@@ -324,27 +265,21 @@ def main(args):
                              prev_primitive_action, prev_best_pix_ind, label_value)
 
             # Adjust exploration probability
-            if not args.is_testing:
-                if args.explore_rate_decay:
-                    explore_prob = max(0.5 * np.power(0.9998, trainer.iteration), 0.1)
-                else:
-                    explore_prob = 0.5
+            # if not args.is_testing:
+            # if args.explore_rate_decay:
+            #     explore_prob = max(0.5 * np.power(0.9998, trainer.iteration), 0.1)
+            # else:
+            #    explore_prob = 0.5
 
             # Do sampling for experience replay
             if args.experience_replay and not args.is_testing:
                 sample_primitive_action = prev_primitive_action
-                if sample_primitive_action == 'push':
-                    sample_primitive_action_id = 0
-                    if args.method == 'reactive':
-                        sample_reward_value = 0 if prev_reward_value == 1 else 1
-                    elif args.method == 'reinforcement':
-                        sample_reward_value = 0 if prev_reward_value == 0.5 else 0.5
-                elif sample_primitive_action == 'grasp':
-                    sample_primitive_action_id = 1
-                    if args.method == 'reactive':
-                        sample_reward_value = 0 if prev_reward_value == 1 else 1
-                    elif args.method == 'reinforcement':
-                        sample_reward_value = 0 if prev_reward_value == 1 else 1
+                # if sample_primitive_action == 'grasp':
+                sample_primitive_action_id = 1
+                if args.method == 'reactive':
+                    sample_reward_value = 0 if prev_reward_value == 1 else 1
+                elif args.method == 'reinforcement':
+                    sample_reward_value = 0 if prev_reward_value == 1 else 1
 
                 # Get samples of the same primitive but with different results
                 sample_ind = np.argwhere(
@@ -394,10 +329,8 @@ def main(args):
                         sample_best_pix_ind, sample_reward_value)
 
                     # Recompute prediction value
-                    if sample_primitive_action == 'push':
-                        trainer.predicted_value_log[sample_iteration] = [np.max(sample_push_predictions)]
-                    elif sample_primitive_action == 'grasp':
-                        trainer.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
+                    # if sample_primitive_action == 'grasp':
+                    trainer.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
 
                 else:
                     print('Not enough prior training samples. Skipping experience replay.')
@@ -423,10 +356,8 @@ def main(args):
         prev_color_heightmap = color_heightmap.copy()
         prev_depth_heightmap = depth_heightmap.copy()
         prev_valid_depth_heightmap = valid_depth_heightmap.copy()
-        prev_push_success = nonlocal_variables['push_success']
         prev_grasp_success = nonlocal_variables['grasp_success']
         prev_primitive_action = nonlocal_variables['primitive_action']
-        prev_push_predictions = push_predictions.copy()
         prev_grasp_predictions = grasp_predictions.copy()
         prev_best_pix_ind = nonlocal_variables['best_pix_ind']
 

@@ -8,11 +8,6 @@ from utils import CrossEntropyLoss2d
 from models import reactive_net, reinforcement_net
 from scipy import ndimage
 
-CUDA_CHECK_OUTPUT = (
-    "CUDA is *NOT* detected. Running with only CPU :(.",  # 0
-    "CUDA detected. Running with GPU acceleration  :).",  # 1
-)
-
 
 class Trainer(object):
 
@@ -20,41 +15,27 @@ class Trainer(object):
                  is_testing, load_snapshot, snapshot_file):
         self.method = method
         # Check if CUDA can be used
-        self.use_cuda = torch.cuda.is_available()
-        print(CUDA_CHECK_OUTPUT[int(self.use_cuda)])
+        assert torch.cuda.is_available()
+        print("CUDA detected :)")
 
         # Fully convolutional classification network for supervised learning
         if self.method == 'reactive':
-            self.model = reactive_net(self.use_cuda)
+            self.model = reactive_net()
 
             # Initialize classification loss
-            '''
-            push_num_classes = 3  # 0 - push, 1 - no change push, 2 - no loss
-            push_class_weights = torch.ones(push_num_classes)
-            push_class_weights[push_num_classes - 1] = 0
-            if self.use_cuda:
-                self.push_criterion = CrossEntropyLoss2d(push_class_weights.cuda()).cuda()
-            else:
-                self.push_criterion = CrossEntropyLoss2d(push_class_weights)
-            '''
             grasp_num_classes = 3  # 0 - grasp, 1 - failed grasp, 2 - no loss
             grasp_class_weights = torch.ones(grasp_num_classes)
             grasp_class_weights[grasp_num_classes - 1] = 0
-            if self.use_cuda:
-                self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights.cuda()).cuda()
-            else:
-                self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights)
+            self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights.cuda()).cuda()
 
         # Fully convolutional Q network for deep reinforcement learning
         elif self.method == 'reinforcement':
-            self.model = reinforcement_net(self.use_cuda)
+            self.model = reinforcement_net()
             self.push_rewards = push_rewards
             self.future_reward_discount = future_reward_discount
 
             # Initialize Huber loss
-            self.criterion = torch.nn.SmoothL1Loss(reduce=False)  # Huber losss
-            if self.use_cuda:
-                self.criterion = self.criterion.cuda()
+            self.criterion = torch.nn.SmoothL1Loss(reduce=False).cuda()  # Huber losss
 
         # Load pre-trained model
         if load_snapshot:
@@ -68,8 +49,7 @@ class Trainer(object):
             print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
 
         # Convert model from CPU to GPU
-        if self.use_cuda:
-            self.model = self.model.cuda()
+        self.model = self.model.cuda()
 
         # Set model to training mode
         self.model.train()
@@ -193,27 +173,28 @@ class Trainer(object):
             # Return Q values (and remove extra padding)
             for rotate_idx in range(len(output_prob)):
                 if rotate_idx == 0:
-                    # push_predictions = output_prob[rotate_idx][0].cpu().data.numpy()[
-                    #    :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
-                    #    int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]
-                    grasp_predictions = output_prob[rotate_idx][1].cpu().data.numpy()[
+                    grasp_predictions = output_prob[rotate_idx][0].cpu().data.numpy()[
                         :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
                         int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]
                 else:
-                    # push_predictions = np.concatenate((
-                    #    push_predictions, output_prob[rotate_idx][0].cpu().data.numpy()[
-                    #        :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
-                    #        int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]), axis=0)
                     grasp_predictions = np.concatenate((
-                        grasp_predictions, output_prob[rotate_idx][1].cpu().data.numpy()[
+                        grasp_predictions, output_prob[rotate_idx][0].cpu().data.numpy()[
                             :, 0, int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2),
                             int(padding_width/2):int(color_heightmap_2x.shape[0]/2 - padding_width/2)]), axis=0)
 
         push_predictions = -1
         return push_predictions, grasp_predictions, state_feat
 
-    def get_label_value(self, primitive_action, push_success, grasp_success, change_detected,
-                        prev_push_predictions, prev_grasp_predictions, next_color_heightmap, next_depth_heightmap):
+    def get_label_value(
+                self, primitive_action,
+                # push_success,
+                grasp_success,
+                change_detected,
+                # prev_push_predictions,
+                prev_grasp_predictions,
+                next_color_heightmap,
+                next_depth_heightmap
+            ):
 
         if self.method == 'reactive':
 
@@ -272,8 +253,6 @@ class Trainer(object):
             label = np.zeros((1, 320, 320)) + fill_value
             action_area = np.zeros((224, 224))
             action_area[best_pix_ind[1]][best_pix_ind[2]] = 1
-            # blur_kernel = np.ones((5,5),np.float32)/25
-            # action_area = cv2.filter2D(action_area, -1, blur_kernel)
             tmp_label = np.zeros((224, 224)) + fill_value
             tmp_label[action_area > 0] = label_value
             label[0, 48:(320-48), 48:(320-48)] = tmp_label
@@ -281,35 +260,17 @@ class Trainer(object):
             # Compute loss and backward pass
             self.optimizer.zero_grad()
             loss_value = 0
-            if primitive_action == 'push':
 
+            if primitive_action == 'grasp':
                 # Do forward pass with specified rotation (to save gradients)
                 push_predictions, grasp_predictions, state_feat = self.forward(
                     color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
 
-                loss = self.push_criterion(
-                    self.model.output_prob[0][0],
-                    Variable(torch.from_numpy(label).long().cuda())
-                )
-                loss.backward()
-                try:
-                    loss_value = loss.cpu().data.numpy()[0]
-                except ValueError:
-                    loss_value = loss.cpu().data.numpy()
-
-            elif primitive_action == 'grasp':
-                # Do forward pass with specified rotation (to save gradients)
-                push_predictions, grasp_predictions, state_feat = self.forward(
-                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
-
-                if self.use_cuda:
-                    loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
-                else:
-                    loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long()))
+                loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
                 loss.backward()
                 try:
                     loss_value += loss.cpu().data.numpy()[0]
-                except ValueError:  # ?
+                except IndexError:  # ?
                     loss_value += loss.cpu().data.numpy()
 
                 # Since grasping is symmetric, train with another forward pass of opposite rotation angle
@@ -322,7 +283,7 @@ class Trainer(object):
                 loss.backward()
                 try:
                     loss_value += loss.cpu().data.numpy()[0]
-                except ValueError:
+                except IndexError:
                     loss_value += loss.cpu().data.numpy()
 
                 loss_value = loss_value/2
@@ -351,7 +312,8 @@ class Trainer(object):
             # Compute loss and backward pass
             self.optimizer.zero_grad()
             loss_value = 0
-            if primitive_action == 'push':
+
+            if primitive_action == 'grasp':
 
                 # Do forward pass with specified rotation (to save gradients)
                 push_predictions, grasp_predictions, state_feat = self.forward(
@@ -359,28 +321,12 @@ class Trainer(object):
 
                 loss = self.criterion(self.model.output_prob[0][0].view(1, 320, 320),
                                       Variable(torch.from_numpy(label).float().cuda())) * Variable(
-                        torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-                loss = loss.sum()
-                loss.backward()
-                try:
-                    loss_value = loss.cpu().data.numpy()[0]
-                except ValueError:
-                    loss_value = loss.cpu().data.numpy()
-
-            elif primitive_action == 'grasp':
-
-                # Do forward pass with specified rotation (to save gradients)
-                push_predictions, grasp_predictions, state_feat = self.forward(
-                    color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
-
-                loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320),
-                                      Variable(torch.from_numpy(label).float().cuda())) * Variable(
                                           torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
                 loss = loss.sum()
                 loss.backward()
                 try:
                     loss_value = loss.cpu().data.numpy()[0]
-                except ValueError:
+                except IndexError:
                     loss_value = loss.cpu().data.numpy()
 
                 opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations/2) % self.model.num_rotations
@@ -388,7 +334,7 @@ class Trainer(object):
                 push_predictions, grasp_predictions, state_feat = self.forward(
                     color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=opposite_rotate_idx)
 
-                loss = self.criterion(self.model.output_prob[0][1].view(1, 320, 320),
+                loss = self.criterion(self.model.output_prob[0][0].view(1, 320, 320),
                                       Variable(torch.from_numpy(label).float().cuda())) * Variable(
                                         torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
 
@@ -396,7 +342,7 @@ class Trainer(object):
                 loss.backward()
                 try:
                     loss_value = loss.cpu().data.numpy()[0]
-                except ValueError:
+                except IndexError:
                     loss_value = loss.cpu().data.numpy()
 
                 loss_value = loss_value/2
@@ -435,28 +381,6 @@ class Trainer(object):
                 canvas = np.concatenate((canvas, tmp_row_canvas), axis=0)
 
         return canvas
-
-    def push_heuristic(self, depth_heightmap):
-
-        num_rotations = 16
-
-        for rotate_idx in range(num_rotations):
-            rotated_heightmap = ndimage.rotate(depth_heightmap, rotate_idx*(360.0/num_rotations), reshape=False, order=0)
-            valid_areas = np.zeros(rotated_heightmap.shape)
-            valid_areas[ndimage.interpolation.shift(rotated_heightmap, [0, -25], order=0) - rotated_heightmap > 0.02] = 1
-            # valid_areas = np.multiply(valid_areas, rotated_heightmap)
-            blur_kernel = np.ones((25, 25), np.float32)/9
-            valid_areas = cv2.filter2D(valid_areas, -1, blur_kernel)
-            tmp_push_predictions = ndimage.rotate(valid_areas, -rotate_idx*(360.0/num_rotations), reshape=False, order=0)
-            tmp_push_predictions.shape = (1, rotated_heightmap.shape[0], rotated_heightmap.shape[1])
-
-            if rotate_idx == 0:
-                push_predictions = tmp_push_predictions
-            else:
-                push_predictions = np.concatenate((push_predictions, tmp_push_predictions), axis=0)
-
-        best_pix_ind = np.unravel_index(np.argmax(push_predictions), push_predictions.shape)
-        return best_pix_ind
 
     def grasp_heuristic(self, depth_heightmap):
 
