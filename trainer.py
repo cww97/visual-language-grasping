@@ -1,15 +1,17 @@
 import os
-import numpy as np
+
 import cv2
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.autograd import Variable
-from utils import CrossEntropyLoss2d
-from models import reactive_net, reinforcement_net
 from scipy import ndimage
+from torch.autograd import Variable
+
+from models import reactive_net, reinforcement_net
+from utils import CrossEntropyLoss2d
 
 CUDA_CHECK_OUTPUT = (
-    "CUDA is *NOT* detected. Running with only CPU :(.",  # 0
+    "CUDA is *NOT* detected. Running with only CPU has been deprecated :(.",  # 0
     "CUDA detected. Running with GPU acceleration  :).",  # 1
 )
 
@@ -20,12 +22,13 @@ class Trainer(object):
                  is_testing, load_snapshot, snapshot_file):
         self.method = method
         # Check if CUDA can be used
-        self.use_cuda = torch.cuda.is_available()
-        print(CUDA_CHECK_OUTPUT[int(self.use_cuda)])
+        use_cuda = torch.cuda.is_available()
+        print(CUDA_CHECK_OUTPUT[int(use_cuda)])
+        if not use_cuda: exit(0)
 
         # Fully convolutional classification network for supervised learning
         if self.method == 'reactive':
-            self.model = reactive_net(self.use_cuda)
+            self.model = reactive_net()
 
             # Initialize classification loss
             '''
@@ -40,21 +43,17 @@ class Trainer(object):
             grasp_num_classes = 3  # 0 - grasp, 1 - failed grasp, 2 - no loss
             grasp_class_weights = torch.ones(grasp_num_classes)
             grasp_class_weights[grasp_num_classes - 1] = 0
-            if self.use_cuda:
-                self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights.cuda()).cuda()
-            else:
-                self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights)
+            self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights.cuda()).cuda()
 
         # Fully convolutional Q network for deep reinforcement learning
         elif self.method == 'reinforcement':
-            self.model = reinforcement_net(self.use_cuda)
+            self.model = reinforcement_net()
             self.push_rewards = push_rewards
             self.future_reward_discount = future_reward_discount
 
             # Initialize Huber loss
             self.criterion = torch.nn.SmoothL1Loss(reduce=False)  # Huber losss
-            if self.use_cuda:
-                self.criterion = self.criterion.cuda()
+            self.criterion = self.criterion.cuda()
 
         # Load pre-trained model
         if load_snapshot:
@@ -68,8 +67,7 @@ class Trainer(object):
             print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
 
         # Convert model from CPU to GPU
-        if self.use_cuda:
-            self.model = self.model.cuda()
+        self.model = self.model.cuda()
 
         # Set model to training mode
         self.model.train()
@@ -302,10 +300,8 @@ class Trainer(object):
                 push_predictions, grasp_predictions, state_feat = self.forward(
                     color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=best_pix_ind[0])
 
-                if self.use_cuda:
-                    loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
-                else:
-                    loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long()))
+                loss = self.grasp_criterion(self.model.output_prob[0][1], Variable(torch.from_numpy(label).long().cuda()))
+
                 loss.backward()
                 try:
                     loss_value += loss.cpu().data.numpy()[0]
@@ -313,7 +309,7 @@ class Trainer(object):
                     loss_value += loss.cpu().data.numpy()
 
                 # Since grasping is symmetric, train with another forward pass of opposite rotation angle
-                opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations/2) % self.model.num_rotations
+                opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
 
                 push_predictions, grasp_predictions, state_feat = self.forward(
                     color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=opposite_rotate_idx)
