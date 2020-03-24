@@ -31,7 +31,7 @@ def main(args):
         robot = RealRobot(args.tcp_host_ip, args.tcp_port, args.rtc_host_ip, args.rtc_port, args.workspace_limits)
 
     # Initialize trainer
-    trainer = Trainer(args.method, args.push_rewards, args.future_reward_discount,
+    trainer = Trainer(args.method, args.future_reward_discount,
                       args.is_testing, args.load_snapshot, args.snapshot_file)
 
     # Initialize data logger
@@ -125,7 +125,6 @@ def main(args):
                     cv2.imwrite('visualization.grasp.png', grasp_pred_vis)
 
                 # Initialize variables that influence reward
-                # nonlocal_variables['push_success'] = False
                 nonlocal_variables['grasp_success'] = False
                 # change_detected = False
 
@@ -209,18 +208,17 @@ def main(args):
             trainer.clearance_log.append([trainer.iteration])
             logger.write_to_log('clearance', trainer.clearance_log)
             if args.is_testing and len(trainer.clearance_log) >= args.max_test_trials:
-                exit_called = True  # Exit after training thread (backprop and saving labels)
+                exit_called = True  # Exit after training thread (back-prop and saving labels)
             continue
 
         if not exit_called:
-            # ############################ forward ##################################
-            #
-            # add a instruction in trainer.forward
-            #
+            # ############################  ##################################
+            # TODO: add a instruction
             ########################################################################
-            # Run forward pass with network to get affordances
-            push_predictions, grasp_predictions, state_feat = trainer.forward(
-                color_heightmap, valid_depth_heightmap, is_volatile=True)
+            # Run F pass with network to get affordances
+            grasp_predictions, state_feat = trainer.forward(
+                color_heightmap, valid_depth_heightmap, is_volatile=True
+            )
             # ## ------- here -------
             # Execute best primitive action on robot in another thread
             nonlocal_variables['executing_action'] = True
@@ -247,10 +245,8 @@ def main(args):
             # Compute training labels
             label_value, prev_reward_value = trainer.get_label_value(
                 prev_primitive_action,
-                # prev_push_success,
                 prev_grasp_success,
                 change_detected,
-                # prev_push_predictions,
                 prev_grasp_predictions,
                 color_heightmap,
                 valid_depth_heightmap
@@ -260,7 +256,7 @@ def main(args):
             trainer.reward_value_log.append([prev_reward_value])
             logger.write_to_log('reward-value', trainer.reward_value_log)
 
-            # Backpropagate
+            # Back-propagate
             trainer.backprop(prev_color_heightmap, prev_valid_depth_heightmap,
                              prev_primitive_action, prev_best_pix_ind, label_value)
 
@@ -282,12 +278,10 @@ def main(args):
                     sample_reward_value = 0 if prev_reward_value == 1 else 1
 
                 # Get samples of the same primitive but with different results
-                sample_ind = np.argwhere(
-                    np.logical_and(
-                            np.asarray(trainer.reward_value_log)[1:trainer.iteration, 0] == sample_reward_value,
-                            np.asarray(trainer.executed_action_log)[1:trainer.iteration, 0] == sample_primitive_action_id
-                        )
-                )
+                sample_ind = np.argwhere(np.logical_and(
+                    np.asarray(trainer.reward_value_log)[1:trainer.iteration, 0] == sample_reward_value,
+                    np.asarray(trainer.executed_action_log)[1:trainer.iteration, 0] == sample_primitive_action_id
+                ))
 
                 if sample_ind.size > 0:
 
@@ -318,15 +312,17 @@ def main(args):
                         os.path.join(logger.depth_heightmaps_directory, '%06d.0.depth.png' % (sample_iteration)), -1)
                     sample_depth_heightmap = sample_depth_heightmap.astype(np.float32) / 100000
 
-                    # Compute forward pass with sample
-                    sample_push_predictions, sample_grasp_predictions, sample_state_feat = trainer.forward(
-                        sample_color_heightmap, sample_depth_heightmap, is_volatile=True)
+                    # Compute F pass with sample
+                    sample_grasp_predictions, sample_state_feat = trainer.forward(
+                        sample_color_heightmap, sample_depth_heightmap, is_volatile=True
+                    )
 
-                    # Get labels for sample and backpropagate
+                    # Get labels for sample and back-propagate
                     sample_best_pix_ind = (np.asarray(trainer.executed_action_log)[sample_iteration, 1:4]).astype(int)
                     trainer.backprop(
                         sample_color_heightmap, sample_depth_heightmap, sample_primitive_action,
-                        sample_best_pix_ind, sample_reward_value)
+                        sample_best_pix_ind, sample_reward_value
+                    )
 
                     # Recompute prediction value
                     # if sample_primitive_action == 'grasp':

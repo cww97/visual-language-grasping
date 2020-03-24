@@ -6,6 +6,7 @@ import cv2
 import torch 
 # import h5py 
 
+
 class Logger():
 
     def __init__(self, continue_logging, logging_directory):
@@ -64,13 +65,13 @@ class Logger():
     def save_images(self, iteration, color_image, depth_image, mode):
         color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
         cv2.imwrite(os.path.join(self.color_images_directory, '%06d.%s.color.png' % (iteration, mode)), color_image)
-        depth_image = np.round(depth_image * 10000).astype(np.uint16) # Save depth in 1e-4 meters
+        depth_image = np.round(depth_image * 10000).astype(np.uint16)  # Save depth in 1e-4 meters
         cv2.imwrite(os.path.join(self.depth_images_directory, '%06d.%s.depth.png' % (iteration, mode)), depth_image)
     
     def save_heightmaps(self, iteration, color_heightmap, depth_heightmap, mode):
         color_heightmap = cv2.cvtColor(color_heightmap, cv2.COLOR_RGB2BGR)
         cv2.imwrite(os.path.join(self.color_heightmaps_directory, '%06d.%s.color.png' % (iteration, mode)), color_heightmap)
-        depth_heightmap = np.round(depth_heightmap * 100000).astype(np.uint16) # Save depth in 1e-5 meters
+        depth_heightmap = np.round(depth_heightmap * 100000).astype(np.uint16)  # Save depth in 1e-5 meters
         cv2.imwrite(os.path.join(self.depth_heightmaps_directory, '%06d.%s.depth.png' % (iteration, mode)), depth_heightmap)
     
     def write_to_log(self, log_name, log):
@@ -83,7 +84,7 @@ class Logger():
         torch.save(model.state_dict(), os.path.join(self.models_directory, 'snapshot-backup.%s.pth' % (name)))
 
     def save_visualizations(self, iteration, affordance_vis, name):
-        cv2.imwrite(os.path.join(self.visualizations_directory, '%06d.%s.png' % (iteration,name)), affordance_vis)
+        cv2.imwrite(os.path.join(self.visualizations_directory, '%06d.%s.png' % (iteration, name)), affordance_vis)
 
     # def save_state_features(self, iteration, state_feat):
     #     h5f = h5py.File(os.path.join(self.visualizations_directory, '%06d.state.h5' % (iteration)), 'w')
@@ -101,9 +102,7 @@ class Logger():
         return recording_directory
 
     def save_transition(self, iteration, transition):
-        depth_heightmap = np.round(transition.state * 100000).astype(np.uint16) # Save depth in 1e-5 meters
+        depth_heightmap = np.round(transition.state * 100000).astype(np.uint16)  # Save depth in 1e-5 meters
         cv2.imwrite(os.path.join(self.transitions_directory, 'data', '%06d.0.depth.png' % (iteration)), depth_heightmap)
-        next_depth_heightmap = np.round(transition.next_state * 100000).astype(np.uint16) # Save depth in 1e-5 meters
+        next_depth_heightmap = np.round(transition.next_state * 100000).astype(np.uint16)  # Save depth in 1e-5 meters
         cv2.imwrite(os.path.join(self.transitions_directory, 'data', '%06d.1.depth.png' % (iteration)), next_depth_heightmap)
-        # np.savetxt(os.path.join(self.transitions_directory, '%06d.action.txt' % (iteration)), [1 if (transition.action == 'grasp') else 0], delimiter=' ')
-        # np.savetxt(os.path.join(self.transitions_directory, '%06d.reward.txt' % (iteration)), [reward_value], delimiter=' ')
