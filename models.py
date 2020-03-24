@@ -145,10 +145,10 @@ class AttnDecoderLSTM(nn.Module):
         return h_1, c_1, alpha, logit
 
 
-class reactive_net(nn.Module):
+class BaseNet(nn.Module):
 
-    def __init__(self):  # , snapshot=None
-        super(reactive_net, self).__init__()
+    def __init__(self, grasp_conv1_out_channels=3):  # , snapshot=None
+        super(BaseNet, self).__init__()
         # Initialize network trunks with DenseNet pre-trained on ImageNet
         self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
@@ -162,7 +162,7 @@ class reactive_net(nn.Module):
             ('grasp-conv0', nn.Conv2d(2048, 64, kernel_size=1, stride=1, bias=False)),
             ('grasp-norm1', nn.BatchNorm2d(64)),
             ('grasp-relu1', nn.ReLU(inplace=True)),
-            ('grasp-conv1', nn.Conv2d(64, 3, kernel_size=1, stride=1, bias=False))
+            ('grasp-conv1', nn.Conv2d(64, grasp_conv1_out_channels, kernel_size=1, stride=1, bias=False))
             # ('grasp-upsample2', nn.Upsample(scale_factor=4, mode='bilinear'))
         ]))
 
@@ -170,118 +170,7 @@ class reactive_net(nn.Module):
         for m in self.named_modules():
             if 'push-' in m[0] or 'grasp-' in m[0]:
                 if isinstance(m[1], nn.Conv2d):
-                    nn.init.kaiming_normal_(m[1].weight.data)
-                elif isinstance(m[1], nn.BatchNorm2d):
-                    m[1].weight.data.fill_(1)
-                    m[1].bias.data.zero_()
-
-        # Initialize output variable (for backprop)
-        self.interm_feat = []
-        self.output_prob = []
-
-    def forward(self, input_color_data, input_depth_data, is_volatile=False, specific_rotation=-1):
-        # print("is_volatile = ", is_volatile)
-
-        if is_volatile:  # try every rotate angle
-            rotations = range(self.num_rotations)
-            torch.set_grad_enabled(False)
-            output_prob = []
-            interm_feat = []
-        else:
-            rotations = [specific_rotation]
-            output_prob = self.output_prob = []
-            interm_feat = self.interm_feat = []
-
-        # Apply rotations to images
-        for rotate_idx in rotations:
-            rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
-
-            # Compute sample grid for rotation BEFORE neural network
-            affine_mat_before = np.asarray([
-                [np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
-                [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]
-            ])
-            affine_mat_before.shape = (2, 3, 1)
-            affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
-
-            flow_grid_before = F.affine_grid(
-                Variable(affine_mat_before, requires_grad=False).cuda(),
-                input_color_data.size()
-            )
-
-            # Rotate images clockwise
-            if is_volatile:
-                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False).cuda(),
-                                             flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False).cuda(),
-                                             flow_grid_before, mode='nearest')
-            else:
-                rotate_color = F.grid_sample(Variable(input_color_data).cuda(), flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data).cuda(), flow_grid_before, mode='nearest')
-
-            # Compute intermediate features
-            interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
-            interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
-            interm_grasp_feat = torch.cat(
-                (interm_grasp_color_feat, interm_grasp_depth_feat), dim=1
-            )
-            interm_feat.append([interm_grasp_feat])
-
-            # Compute sample grid for rotation AFTER branches
-            affine_mat_after = np.asarray([
-                [np.cos(rotate_theta), np.sin(rotate_theta), 0],
-                [-np.sin(rotate_theta), np.cos(rotate_theta), 0]
-            ])
-            affine_mat_after.shape = (2, 3, 1)
-            affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
-
-            flow_grid_after = F.affine_grid(
-                Variable(affine_mat_after, requires_grad=False).cuda(),
-                interm_grasp_feat.data.size()
-            )
-
-            # TODO: add a LSTMencoder here
-            # Forward pass through branches, undo rotation on output predictions, upsample results
-            output_prob.append([
-                nn.Upsample(
-                    scale_factor=16, mode='bilinear', align_corners=True
-                ).forward(F.grid_sample(
-                    self.graspnet(interm_grasp_feat),
-                    flow_grid_after, mode='nearest'
-                ))
-            ])
-
-        if is_volatile: torch.set_grad_enabled(True)
-        return output_prob, interm_feat
-
-
-class reinforcement_net(nn.Module):
-
-    def __init__(self):  # , snapshot=None
-        super(reinforcement_net, self).__init__()
-
-        # Initialize network trunks with DenseNet pre-trained on ImageNet
-        self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
-        self.grasp_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
-
-        self.num_rotations = 16
-
-        # Construct network branches for grasping
-        self.graspnet = nn.Sequential(OrderedDict([
-            ('grasp-norm0', nn.BatchNorm2d(2048)),
-            ('grasp-relu0', nn.ReLU(inplace=True)),
-            ('grasp-conv0', nn.Conv2d(2048, 64, kernel_size=1, stride=1, bias=False)),
-            ('grasp-norm1', nn.BatchNorm2d(64)),
-            ('grasp-relu1', nn.ReLU(inplace=True)),
-            ('grasp-conv1', nn.Conv2d(64, 1, kernel_size=1, stride=1, bias=False))
-            # ('grasp-upsample2', nn.Upsample(scale_factor=4, mode='bilinear'))
-        ]))
-
-        # Initialize network weights
-        for m in self.named_modules():
-            if 'push-' in m[0] or 'grasp-' in m[0]:
-                if isinstance(m[1], nn.Conv2d):
-                    nn.init.kaiming_normal_(m[1].weight.data)
+                    nn.init.    kaiming_normal_(m[1].weight.data)
                 elif isinstance(m[1], nn.BatchNorm2d):
                     m[1].weight.data.fill_(1)
                     m[1].bias.data.zero_()
@@ -319,14 +208,14 @@ class reinforcement_net(nn.Module):
             )
 
             # Rotate images clockwise
-            if is_volatile:
-                rotate_color = F.grid_sample(Variable(input_color_data, requires_grad=False).cuda(),
-                                             flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data, requires_grad=False).cuda(),
-                                             flow_grid_before, mode='nearest')
-            else:
-                rotate_color = F.grid_sample(Variable(input_color_data).cuda(), flow_grid_before, mode='nearest')
-                rotate_depth = F.grid_sample(Variable(input_depth_data).cuda(), flow_grid_before, mode='nearest')
+            rotate_color = F.grid_sample(
+                Variable(input_color_data, requires_grad=False).cuda(),
+                flow_grid_before, mode='nearest'
+            )
+            rotate_depth = F.grid_sample(
+                Variable(input_depth_data, requires_grad=False).cuda(),
+                flow_grid_before, mode='nearest'
+            )
 
             # Compute intermediate features
             interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
@@ -362,3 +251,13 @@ class reinforcement_net(nn.Module):
 
         if is_volatile: torch.set_grad_enabled(True)
         return output_prob, interm_feat
+
+
+class reactive_net(BaseNet):
+    def __init__(self):
+        super().__init__(grasp_conv1_out_channels=3)
+
+
+class reinforcement_net(BaseNet):
+    def __init__(self):
+        super().__init__(grasp_conv1_out_channels=1)

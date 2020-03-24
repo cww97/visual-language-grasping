@@ -93,7 +93,6 @@ class Trainer(object):
         self.is_exploit_log.shape = (self.iteration, 1)
         self.is_exploit_log = self.is_exploit_log.tolist()
         self.clearance_log = np.loadtxt(os.path.join(transitions_directory, 'clearance.log.txt'), delimiter=' ')
-        # import pdb; pdb.set_trace()
         self.clearance_log.shape = (self.clearance_log.shape[0], 1)
         self.clearance_log = self.clearance_log.tolist()
 

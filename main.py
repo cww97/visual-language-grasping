@@ -177,7 +177,7 @@ def main(args):
 
         #############################################################
         #
-        # instruction = robot.get_instruction()
+        # TODO: instruction = robot.get_instruction()
         #
         #############################################################
 
