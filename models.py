@@ -8,147 +8,68 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from torch.autograd import Variable
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+# from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
-class EncoderLSTM(nn.Module):
-    ''' Encodes navigation instructions, returning hidden state context (for
-        attention methods) and a decoder initial state. '''
-
-    def __init__(self, vocab_size, embedding_size, hidden_size, padding_idx,
-                 dropout_ratio, bidirectional=False, num_layers=1):
-        super(EncoderLSTM, self).__init__()
-        self.embedding_size = embedding_size
-        self.hidden_size = hidden_size
-        self.drop = nn.Dropout(p=dropout_ratio)
-        self.num_directions = 2 if bidirectional else 1
-        self.num_layers = num_layers
-        self.embedding = nn.Embedding(vocab_size, embedding_size, padding_idx)
-        self.lstm = nn.LSTM(embedding_size, hidden_size, self.num_layers,
-                            batch_first=True, dropout=dropout_ratio,
-                            bidirectional=bidirectional)
-        self.encoder2decoder = nn.Linear(hidden_size * self.num_directions,
-                                         hidden_size * self.num_directions)
-
-    def init_state(self, inputs):
-        ''' Initialize to zero cell states and hidden states.'''
-        batch_size = inputs.size(0)
-        h0 = Variable(torch.zeros(
-            self.num_layers * self.num_directions,
-            batch_size,
-            self.hidden_size
-        ), requires_grad=False)
-        c0 = Variable(torch.zeros(
-            self.num_layers * self.num_directions,
-            batch_size,
-            self.hidden_size
-        ), requires_grad=False)
-        return h0.cuda(), c0.cuda()
-
-    def forward(self, inputs, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a
-            list of lengths for dynamic batching. '''
-        embeds = self.embedding(inputs)   # (batch, seq_len, embedding_size)
-        embeds = self.drop(embeds)
-        h0, c0 = self.init_state(inputs)
-        packed_embeds = pack_padded_sequence(embeds, lengths, batch_first=True)
-        enc_h, (enc_h_t, enc_c_t) = self.lstm(packed_embeds, (h0, c0))
-
-        if self.num_directions == 2:
-            h_t = torch.cat((enc_h_t[-1], enc_h_t[-2]), 1)
-            c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
-        else:
-            h_t = enc_h_t[-1]
-            c_t = enc_c_t[-1]  # (batch, hidden_size)
-
-        decoder_init = nn.Tanh()(self.encoder2decoder(h_t))
-
-        ctx, lengths = pad_packed_sequence(enc_h, batch_first=True)
-        ctx = self.drop(ctx)
-        return ctx, decoder_init, c_t
-        # (batch, seq_len, hidden_size*num_directions)
-        #                              (batch, hidden_size)
-
-
-class SoftDotAttention(nn.Module):
-    '''Soft Dot Attention.
-
-    Ref: http://www.aclweb.org/anthology/D15-1166
-    Adapted from PyTorch OPEN NMT.
+class CNN_Text(nn.Module):
+    '''https://github.com/Shawn1993/cnn-text-classification-pytorch
     '''
 
-    def __init__(self, dim):
-        '''Initialize layer.'''
-        super(SoftDotAttention, self).__init__()
-        self.linear_in = nn.Linear(dim, dim, bias=False)
-        self.sm = nn.Softmax(dim=1)
-        self.linear_out = nn.Linear(dim * 2, dim, bias=False)
-        self.tanh = nn.Tanh()
+    def __init__(self, embed_num, embed_dim, drop_out):
+        super().__init__()
+        self.embed_num = embed_num
+        self.embed_dim = embed_dim
+        self.embed = nn.Embedding(self.embed_num, self.embed_dim)
 
-    def forward(self, h, context, mask=None):
-        '''Propagate h through the network.
+        Ci = 1
+        self.conv1_1 = nn.Conv2d(Ci, 104, (1, self.embed_dim))
+        self.conv1_2 = nn.Conv2d(Ci, 104, (2, self.embed_dim))
+        self.conv1_3 = nn.Conv2d(Ci, 104, (3, self.embed_dim))
+        self.conv1_4 = nn.Conv2d(Ci, 104, (4, self.embed_dim))
+        self.conv1_5 = nn.Conv2d(Ci, 104, (5, self.embed_dim))
+        self.conv1_6 = nn.Conv2d(Ci, 104, (6, self.embed_dim))
+        self.conv1_7 = nn.Conv2d(Ci, 100, (7, self.embed_dim))
+        self.conv1_8 = nn.Conv2d(Ci, 100, (8, self.embed_dim))
+        self.conv1_9 = nn.Conv2d(Ci, 100, (9, self.embed_dim))
+        self.conv1_10 = nn.Conv2d(Ci, 100, (10, self.embed_dim))
 
-        h: batch x dim
-        context: batch x seq_len x dim
-        mask: batch x seq_len indices to be masked
-        '''
-        target = self.linear_in(h).unsqueeze(2)  # batch x dim x 1
+        self.dropout = nn.Dropout(drop_out)
 
-        # Get attention
-        attn = torch.bmm(context, target).squeeze(2)  # batch x seq_len
-        if mask is not None:
-            # -Inf masking prior to the softmax
-            attn.data.masked_fill_(mask, -float('inf'))
-        attn = self.sm(attn)
-        attn3 = attn.view(attn.size(0), 1, attn.size(1))  # batch x 1 x seq_len
+    def conv_and_pool(self, x, conv):
+        x = F.relu(conv(x)).squeeze(3)  # (N, Co, W)
+        x = F.max_pool1d(x, x.size(2)).squeeze(2)
+        return x
 
-        weighted_context = torch.bmm(attn3, context).squeeze(1)  # batch x dim
-        h_tilde = torch.cat((weighted_context, h), 1)
+    def forward(self, x):
+        # x = x[:1, ]
+        x = self.embed(x)              # (N, W, D)
+        print('begin: ', x.shape)
+        x = Variable(x).unsqueeze(1)   # (N, Ci, W, D)
 
-        h_tilde = self.tanh(self.linear_out(h_tilde))
-        return h_tilde, attn
+        x1 = self.conv_and_pool(x, self.conv1_1)
+        x2 = self.conv_and_pool(x, self.conv1_2)
+        x3 = self.conv_and_pool(x, self.conv1_3)
+        x4 = self.conv_and_pool(x, self.conv1_4)
+        x5 = self.conv_and_pool(x, self.conv1_5)
+        x6 = self.conv_and_pool(x, self.conv1_6)
+        x7 = self.conv_and_pool(x, self.conv1_7)
+        x8 = self.conv_and_pool(x, self.conv1_8)
+        x9 = self.conv_and_pool(x, self.conv1_9)
+        x10 = self.conv_and_pool(x, self.conv1_10)
+        x = torch.cat((x1, x2, x3, x4, x5, x6, x7, x8, x9, x10), 1)  # (N,1024)
 
-
-class AttnDecoderLSTM(nn.Module):
-    ''' An unrolled LSTM with attention over instructions for decoding navigation actions. '''
-
-    def __init__(self, input_action_size, output_action_size, embedding_size, hidden_size,
-                 dropout_ratio, feature_size=2048):
-        super(AttnDecoderLSTM, self).__init__()
-        self.embedding_size = embedding_size
-        self.feature_size = feature_size
-        self.hidden_size = hidden_size
-        self.embedding = nn.Embedding(input_action_size, embedding_size)
-        self.drop = nn.Dropout(p=dropout_ratio)
-        self.lstm = nn.LSTMCell(embedding_size + feature_size, hidden_size)
-        self.attention_layer = SoftDotAttention(hidden_size)
-        self.decoder2action = nn.Linear(hidden_size, output_action_size)
-
-    def forward(self, action, feature, h_0, c_0, ctx, ctx_mask=None):
-        ''' Takes a single step in the decoder LSTM (allowing sampling).
-
-        action: batch x 1
-        feature: batch x feature_size
-        h_0: batch x hidden_size
-        c_0: batch x hidden_size
-        ctx: batch x seq_len x dim
-        ctx_mask: batch x seq_len - indices to be masked
-        '''
-        action_embeds = self.embedding(action)   # (batch, 1, embedding_size)
-        action_embeds = action_embeds.squeeze()
-        concat_input = torch.cat((action_embeds, feature), 1)  # (batch, embedding_size+feature_size)
-        drop = self.drop(concat_input)
-        h_1, c_1 = self.lstm(drop, (h_0, c_0))
-        h_1_drop = self.drop(h_1)
-        h_tilde, alpha = self.attention_layer(h_1_drop, ctx, ctx_mask)
-        logit = self.decoder2action(h_tilde)
-        return h_1, c_1, alpha, logit
+        x = self.dropout(x)  # (N, len(Ks)*Co)
+        x = x.reshape(len(x), 32, 32)
+        # print('end ', x.shape, type(x)); assert False
+        return x
 
 
 class BaseNet(nn.Module):
 
-    def __init__(self, grasp_conv1_out_channels=3):  # , snapshot=None
-        super(BaseNet, self).__init__()
+    def __init__(self, grasp_conv1_out_channels=3, **kwargs):
+        super().__init__()
+        # self.text_encoder = CNN_Text(**kwargs)
+
         # Initialize network trunks with DenseNet pre-trained on ImageNet
         self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
@@ -170,7 +91,7 @@ class BaseNet(nn.Module):
         for m in self.named_modules():
             if 'push-' in m[0] or 'grasp-' in m[0]:
                 if isinstance(m[1], nn.Conv2d):
-                    nn.init.    kaiming_normal_(m[1].weight.data)
+                    nn.init.kaiming_normal_(m[1].weight.data)
                 elif isinstance(m[1], nn.BatchNorm2d):
                     m[1].weight.data.fill_(1)
                     m[1].bias.data.zero_()
@@ -180,6 +101,12 @@ class BaseNet(nn.Module):
         self.output_prob = []
 
     def forward(self, input_color_data, input_depth_data, is_volatile=False, specific_rotation=-1):
+        """
+        is_volatile: true for each rotation, false for specific_rotation
+        use is_volatile=false in backward
+        """
+        # TODO: rua
+        # text_feature = self.text_encoder(instructor)
 
         if is_volatile:  # try every rotate angle
             rotations = range(self.num_rotations)
@@ -217,7 +144,7 @@ class BaseNet(nn.Module):
                 flow_grid_before, mode='nearest'
             )
 
-            # Compute intermediate features
+            # Compute intermediate features, use pretrained densenet
             interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
             interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
             interm_grasp_feat = torch.cat(
@@ -238,7 +165,7 @@ class BaseNet(nn.Module):
                 interm_grasp_feat.data.size()
             )
 
-            # TODO : add a LSTM here
+            # TODO : rua
             # Forward pass through branches, undo rotation on output predictions, upsample results
             output_prob.append([
                 nn.Upsample(
@@ -254,10 +181,14 @@ class BaseNet(nn.Module):
 
 
 class reactive_net(BaseNet):
-    def __init__(self):
+    def __init__(self, **kwargs):
         super().__init__(grasp_conv1_out_channels=3)
 
 
 class reinforcement_net(BaseNet):
     def __init__(self):
         super().__init__(grasp_conv1_out_channels=1)
+
+
+if __name__ == '__main__':
+    example_instruction = 'pick up the {color} {shape}.'

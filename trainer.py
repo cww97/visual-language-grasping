@@ -141,6 +141,7 @@ class Trainer(object):
         input_color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
         input_depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
 
+        # TODO: text -> tensor
         # Pass input data through model
         output_prob, state_feat = self.model.forward(
             input_color_data, input_depth_data, is_volatile, specific_rotation
@@ -180,7 +181,8 @@ class Trainer(object):
                             int(padding_width / 2): int(color_heightmap_2x.shape[0] / 2 - padding_width / 2)
                         ]
                     ), axis=0)
-
+        
+        print("grasp_predictions = ", grasp_predictions)
         return grasp_predictions, state_feat
 
     def get_label_value(
