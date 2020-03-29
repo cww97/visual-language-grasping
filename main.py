@@ -166,6 +166,7 @@ def main(args):
 
         # cslnb
         instruction = robot.get_instruction()
+        print('instruction: %s' % (instruction))
 
         # Get latest RGB-D image
         color_img, depth_img = robot.get_camera_data()
@@ -251,7 +252,7 @@ def main(args):
             logger.write_to_log('reward-value', trainer.reward_value_log)
 
             # Back-propagate
-            trainer.backprop(prev_color_heightmap, prev_valid_depth_heightmap,
+            trainer.backprop(instruction, prev_color_heightmap, prev_valid_depth_heightmap,
                              prev_primitive_action, prev_best_pix_ind, label_value)
 
             # Adjust exploration probability
@@ -327,8 +328,7 @@ def main(args):
                 logger.save_backup_model(trainer.model, args.method)
                 if trainer.iteration % 50 == 0:
                     logger.save_model(trainer.iteration, trainer.model, args.method)
-                    if trainer.use_cuda:
-                        trainer.model = trainer.model.cuda()
+                    trainer.model = trainer.model.cuda()
 
         # Sync both action thread and training thread
         while nonlocal_variables['executing_action']:

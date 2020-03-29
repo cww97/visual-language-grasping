@@ -224,7 +224,7 @@ class Trainer(object):
             return expected_reward, current_reward
 
     # Compute labels and back-propagate
-    def backprop(self, color_heightmap, depth_heightmap, primitive_action, best_pix_ind, label_value):
+    def backprop(self, instruction, color_heightmap, depth_heightmap, primitive_action, best_pix_ind, label_value):
 
         if self.method == 'reactive':
 
@@ -246,7 +246,7 @@ class Trainer(object):
             if primitive_action == 'grasp':
                 # Do for-ward pass with specified rotation (to save gradients)
                 grasp_predictions, state_feat = self.forward(
-                    color_heightmap, depth_heightmap,
+                    instruction, color_heightmap, depth_heightmap,
                     is_volatile=False, specific_rotation=best_pix_ind[0]
                 )
 
@@ -262,7 +262,7 @@ class Trainer(object):
                 opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
 
                 grasp_predictions, state_feat = self.forward(
-                    color_heightmap, depth_heightmap,
+                    instruction, color_heightmap, depth_heightmap,
                     is_volatile=False, specific_rotation=opposite_rotate_idx
                 )
 
@@ -303,7 +303,7 @@ class Trainer(object):
 
                 # Do for-ward pass with specified rotation (to save gradients)
                 grasp_predictions, state_feat = self.forward(
-                    color_heightmap, depth_heightmap,
+                    instruction, color_heightmap, depth_heightmap,
                     is_volatile=False, specific_rotation=best_pix_ind[0]
                 )
 
@@ -321,7 +321,7 @@ class Trainer(object):
                 opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
 
                 grasp_predictions, state_feat = self.forward(
-                    color_heightmap, depth_heightmap,
+                    instruction, color_heightmap, depth_heightmap,
                     is_volatile=False, specific_rotation=opposite_rotate_idx
                 )
 
