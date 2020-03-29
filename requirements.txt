@@ -4,4 +4,5 @@ opencv-python
 scipy
 torch
 torchvision
+torchtext
 PyYAML
