@@ -21,7 +21,7 @@ class CNN_Text(nn.Module):
         self.embed_dim = embed_dim
         self.embed = nn.Embedding(self.embed_num, self.embed_dim)
 
-        Ci = 1
+        Ci = 1  # total 1024 = 32 * 32
         self.conv1_1 = nn.Conv2d(Ci, 104, (1, self.embed_dim))
         self.conv1_2 = nn.Conv2d(Ci, 104, (2, self.embed_dim))
         self.conv1_3 = nn.Conv2d(Ci, 104, (3, self.embed_dim))
