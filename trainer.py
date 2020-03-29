@@ -6,9 +6,9 @@ import torch
 import torch.nn.functional as F
 from scipy import ndimage
 from torch.autograd import Variable
-
 from models import reactive_net, reinforcement_net
 from utils import CrossEntropyLoss2d
+from envs.data import Data as TextData
 
 
 class Trainer(object):
@@ -17,10 +17,12 @@ class Trainer(object):
                  is_testing, load_snapshot, snapshot_file):
         assert torch.cuda.is_available()
         self.method = method
+        self.text_data = TextData()
+        vocab, dim, drop = len(self.text_data.text_field.vocab), 32, 0.5
 
         # Fully convolutional classification network for supervised learning
         if self.method == 'reactive':
-            self.model = reactive_net()
+            self.model = reactive_net(embed_num=vocab, embed_dim=dim, drop_out=drop)
 
             # Initialize classification loss
             grasp_num_classes = 3  # 0 - grasp, 1 - failed grasp, 2 - no loss
@@ -30,7 +32,7 @@ class Trainer(object):
 
         # Fully convolutional Q network for deep reinforcement learning
         elif self.method == 'reinforcement':
-            self.model = reinforcement_net()
+            self.model = reinforcement_net(embed_num=vocab, embed_dim=dim, drop_out=drop)
             self.future_reward_discount = future_reward_discount
 
             # Initialize Huber loss
@@ -96,11 +98,11 @@ class Trainer(object):
         self.clearance_log.shape = (self.clearance_log.shape[0], 1)
         self.clearance_log = self.clearance_log.tolist()
 
-    # ########################################
-    # TODO: add a instructor here
-    # #############################################
     # Compute for ward pass through model to compute affordances/Q
-    def forward(self, color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=-1):
+    def forward(self, instruction, color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=-1):
+
+        # cslnb, convert text_instruction -> text_tensor
+        instruction_tensor = self.text_data.get_tensor(instruction).cuda()
 
         # Apply 2x scale to input heightmaps
         color_heightmap_2x = ndimage.zoom(color_heightmap, zoom=[2, 2, 1], order=0)
@@ -141,10 +143,9 @@ class Trainer(object):
         input_color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
         input_depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
 
-        # TODO: text -> tensor
-        # Pass input data through model
+        # Pass input data through model, cslnb
         output_prob, state_feat = self.model.forward(
-            input_color_data, input_depth_data, is_volatile, specific_rotation
+            instruction_tensor, input_color_data, input_depth_data, is_volatile, specific_rotation
         )
         # print(len(output_prob), type(output_prob[0]), output_prob[0])
 
@@ -181,8 +182,8 @@ class Trainer(object):
                             int(padding_width / 2): int(color_heightmap_2x.shape[0] / 2 - padding_width / 2)
                         ]
                     ), axis=0)
-        
-        print("grasp_predictions = ", grasp_predictions)
+
+        # print("grasp_predictions = ", grasp_predictions)
         return grasp_predictions, state_feat
 
     def get_label_value(
@@ -190,6 +191,7 @@ class Trainer(object):
         grasp_success,
         change_detected,
         prev_grasp_predictions,
+        instruction,
         next_color_heightmap,
         next_depth_heightmap
     ):
@@ -209,9 +211,8 @@ class Trainer(object):
                 future_reward = 0
             else:
                 next_grasp_predictions, next_state_feat = self.forward(
-                    next_color_heightmap, next_depth_heightmap, is_volatile=True
+                    instruction, next_color_heightmap, next_depth_heightmap, is_volatile=True
                 )
-                # future_reward = max(np.max(next_xxsh_predictions), np.max(next_grasp_predictions))
                 future_reward = np.max(next_grasp_predictions)
 
             print('Current reward: %f' % (current_reward))
@@ -395,3 +396,9 @@ class Trainer(object):
 
         best_pix_ind = np.unravel_index(np.argmax(grasp_predictions), grasp_predictions.shape)
         return best_pix_ind
+
+
+if __name__ == '__main__':
+    text_data = TextData()
+    t = text_data.get_tensor('balabala dsa pick up, the')
+    print(t)

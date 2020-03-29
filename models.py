@@ -17,22 +17,17 @@ class CNN_Text(nn.Module):
 
     def __init__(self, embed_num, embed_dim, drop_out):
         super().__init__()
+        # print(embed_num, embed_dim, drop_out)
         self.embed_num = embed_num
         self.embed_dim = embed_dim
         self.embed = nn.Embedding(self.embed_num, self.embed_dim)
 
         Ci = 1  # total 1024 = 32 * 32
-        self.conv1_1 = nn.Conv2d(Ci, 104, (1, self.embed_dim))
-        self.conv1_2 = nn.Conv2d(Ci, 104, (2, self.embed_dim))
-        self.conv1_3 = nn.Conv2d(Ci, 104, (3, self.embed_dim))
-        self.conv1_4 = nn.Conv2d(Ci, 104, (4, self.embed_dim))
-        self.conv1_5 = nn.Conv2d(Ci, 104, (5, self.embed_dim))
-        self.conv1_6 = nn.Conv2d(Ci, 104, (6, self.embed_dim))
-        self.conv1_7 = nn.Conv2d(Ci, 100, (7, self.embed_dim))
-        self.conv1_8 = nn.Conv2d(Ci, 100, (8, self.embed_dim))
-        self.conv1_9 = nn.Conv2d(Ci, 100, (9, self.embed_dim))
-        self.conv1_10 = nn.Conv2d(Ci, 100, (10, self.embed_dim))
-
+        self.conv1_1 = nn.Conv2d(Ci, 81920, (1, self.embed_dim))
+        self.conv1_2 = nn.Conv2d(Ci, 81920, (2, self.embed_dim))
+        self.conv1_3 = nn.Conv2d(Ci, 81920, (3, self.embed_dim))
+        self.conv1_4 = nn.Conv2d(Ci, 81920, (4, self.embed_dim))
+        self.conv1_5 = nn.Conv2d(Ci, 81920, (5, self.embed_dim))
         self.dropout = nn.Dropout(drop_out)
 
     def conv_and_pool(self, x, conv):
@@ -41,9 +36,7 @@ class CNN_Text(nn.Module):
         return x
 
     def forward(self, x):
-        # x = x[:1, ]
         x = self.embed(x)              # (N, W, D)
-        print('begin: ', x.shape)
         x = Variable(x).unsqueeze(1)   # (N, Ci, W, D)
 
         x1 = self.conv_and_pool(x, self.conv1_1)
@@ -51,15 +44,10 @@ class CNN_Text(nn.Module):
         x3 = self.conv_and_pool(x, self.conv1_3)
         x4 = self.conv_and_pool(x, self.conv1_4)
         x5 = self.conv_and_pool(x, self.conv1_5)
-        x6 = self.conv_and_pool(x, self.conv1_6)
-        x7 = self.conv_and_pool(x, self.conv1_7)
-        x8 = self.conv_and_pool(x, self.conv1_8)
-        x9 = self.conv_and_pool(x, self.conv1_9)
-        x10 = self.conv_and_pool(x, self.conv1_10)
-        x = torch.cat((x1, x2, x3, x4, x5, x6, x7, x8, x9, x10), 1)  # (N,1024)
+        x = torch.cat((x1, x2, x3, x4, x5), 1)  # (N,1024)
 
         x = self.dropout(x)  # (N, len(Ks)*Co)
-        x = x.reshape(len(x), 32, 32)
+        x = x.reshape(len(x), 1024, 20, 20)
         # print('end ', x.shape, type(x)); assert False
         return x
 
@@ -68,7 +56,7 @@ class BaseNet(nn.Module):
 
     def __init__(self, grasp_conv1_out_channels=3, **kwargs):
         super().__init__()
-        # self.text_encoder = CNN_Text(**kwargs)
+        self.text_encoder = CNN_Text(**kwargs)
 
         # Initialize network trunks with DenseNet pre-trained on ImageNet
         self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
@@ -78,9 +66,9 @@ class BaseNet(nn.Module):
 
         # Construct network branches for xxshing and grasping
         self.graspnet = nn.Sequential(OrderedDict([
-            ('grasp-norm0', nn.BatchNorm2d(2048)),
+            ('grasp-norm0', nn.BatchNorm2d(3072)),
             ('grasp-relu0', nn.ReLU(inplace=True)),
-            ('grasp-conv0', nn.Conv2d(2048, 64, kernel_size=1, stride=1, bias=False)),
+            ('grasp-conv0', nn.Conv2d(3072, 64, kernel_size=1, stride=1, bias=False)),
             ('grasp-norm1', nn.BatchNorm2d(64)),
             ('grasp-relu1', nn.ReLU(inplace=True)),
             ('grasp-conv1', nn.Conv2d(64, grasp_conv1_out_channels, kernel_size=1, stride=1, bias=False))
@@ -100,13 +88,15 @@ class BaseNet(nn.Module):
         self.interm_feat = []
         self.output_prob = []
 
-    def forward(self, input_color_data, input_depth_data, is_volatile=False, specific_rotation=-1):
+    def forward(self, instruction, input_color_data, input_depth_data, is_volatile=False, specific_rotation=-1):
         """
         is_volatile: true for each rotation, false for specific_rotation
         use is_volatile=false in backward
         """
-        # TODO: rua
-        # text_feature = self.text_encoder(instructor)
+
+        # cnn-text, rua
+        text_feature = self.text_encoder(instruction).detach()
+        # print(text_feature.shape)
 
         if is_volatile:  # try every rotate angle
             rotations = range(self.num_rotations)
@@ -147,8 +137,9 @@ class BaseNet(nn.Module):
             # Compute intermediate features, use pretrained densenet
             interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
             interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
+            # assert False
             interm_grasp_feat = torch.cat(
-                (interm_grasp_color_feat, interm_grasp_depth_feat), dim=1
+                (text_feature, interm_grasp_color_feat, interm_grasp_depth_feat), dim=1
             )
             interm_feat.append([interm_grasp_feat])
 
@@ -165,7 +156,6 @@ class BaseNet(nn.Module):
                 interm_grasp_feat.data.size()
             )
 
-            # TODO : rua
             # Forward pass through branches, undo rotation on output predictions, upsample results
             output_prob.append([
                 nn.Upsample(
@@ -175,6 +165,8 @@ class BaseNet(nn.Module):
                     flow_grid_after, mode='nearest'
                 ))
             ])
+            # print(output_prob[-1][0].shape)
+            # assert False
 
         if is_volatile: torch.set_grad_enabled(True)
         return output_prob, interm_feat
@@ -182,12 +174,12 @@ class BaseNet(nn.Module):
 
 class reactive_net(BaseNet):
     def __init__(self, **kwargs):
-        super().__init__(grasp_conv1_out_channels=3)
+        super().__init__(grasp_conv1_out_channels=3, **kwargs)
 
 
 class reinforcement_net(BaseNet):
-    def __init__(self):
-        super().__init__(grasp_conv1_out_channels=1)
+    def __init__(self, **kwargs):
+        super().__init__(grasp_conv1_out_channels=1, **kwargs)
 
 
 if __name__ == '__main__':

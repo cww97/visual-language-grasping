@@ -43,9 +43,9 @@ class Data(object):
         self.dataset = Data.DataSet(self.text_field, filename)
         self.text_field.build_vocab(self.dataset)
 
-    def get_tenser(self, x: str):
+    def get_tensor(self, x: str):
         x = self.text_field.preprocess(x)
-        return self.text_field.numericalize([x])
+        return self.text_field.numericalize([x]).t()
 
 
 def generate(inf, ouf):
@@ -72,4 +72,4 @@ if __name__ == '__main__':
     ouf = os.path.join(os.path.dirname(__file__), 'sample.tsv')
     generate(inf, ouf)
     test_data = Data()
-    print(test_data.get_tenser('pick up the red cube'))
+    print(test_data.get_tensor('pick up the red cube'))

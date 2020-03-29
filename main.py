@@ -164,6 +164,9 @@ def main(args):
         if args.is_sim:
             robot.check_sim()
 
+        # cslnb
+        instruction = robot.get_instruction()
+
         # Get latest RGB-D image
         color_img, depth_img = robot.get_camera_data()
         depth_img = depth_img * robot.cam_depth_scale  # Apply depth scale from calibration
@@ -174,12 +177,6 @@ def main(args):
             robot.cam_pose, args.workspace_limits, args.heightmap_resolution)
         valid_depth_heightmap = depth_heightmap.copy()
         valid_depth_heightmap[np.isnan(valid_depth_heightmap)] = 0
-
-        #############################################################
-        #
-        # TODO: instruction = robot.get_instruction()
-        #
-        #############################################################
 
         # Save RGB-D images and RGB-D heightmaps
         logger.save_images(trainer.iteration, color_img, depth_img, '0')
@@ -212,14 +209,10 @@ def main(args):
             continue
 
         if not exit_called:
-            # ############################  ##################################
-            # TODO: add a instruction
-            ########################################################################
             # Run F pass with network to get affordances
             grasp_predictions, state_feat = trainer.forward(
-                color_heightmap, valid_depth_heightmap, is_volatile=True
+                instruction, color_heightmap, valid_depth_heightmap, is_volatile=True
             )
-            # ## ------- here -------
             # Execute best primitive action on robot in another thread
             nonlocal_variables['executing_action'] = True
 
@@ -248,6 +241,7 @@ def main(args):
                 prev_grasp_success,
                 change_detected,
                 prev_grasp_predictions,
+                instruction,
                 color_heightmap,
                 valid_depth_heightmap
             )
@@ -272,10 +266,7 @@ def main(args):
                 sample_primitive_action = prev_primitive_action
                 # if sample_primitive_action == 'grasp':
                 sample_primitive_action_id = 1
-                if args.method == 'reactive':
-                    sample_reward_value = 0 if prev_reward_value == 1 else 1
-                elif args.method == 'reinforcement':
-                    sample_reward_value = 0 if prev_reward_value == 1 else 1
+                sample_reward_value = 0 if prev_reward_value == 1 else 1
 
                 # Get samples of the same primitive but with different results
                 sample_ind = np.argwhere(np.logical_and(
