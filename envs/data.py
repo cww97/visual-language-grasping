@@ -13,7 +13,7 @@ class Data(object):
         def sort_key(ex):
             return len(ex.text)
 
-        def __init__(self, text_field, filename):
+        def __init__(self, text_field: data.Field, filename):
             def clean_str(string):
                 """
                 Tokenization/string cleaning for all datasets except for SST.
@@ -28,13 +28,13 @@ class Data(object):
                 string = re.sub(r"\'ll", " \'ll", string)
                 string = re.sub(r",", " , ", string)
                 string = re.sub(r"!", " ! ", string)
-                string = re.sub(r"\(", " \( ", string)
-                string = re.sub(r"\)", " \) ", string)
-                string = re.sub(r"\?", " \? ", string)
+                string = re.sub(r"\(", " \\( ", string)
+                string = re.sub(r"\)", " \\) ", string)
+                string = re.sub(r"\?", " \\? ", string)
                 string = re.sub(r"\s{2,}", " ", string)
-                return string.strip()
+                return string.strip().split()
 
-            text_field.preprocessing = data.Pipeline(clean_str)
+            text_field.tokenize = clean_str
             fields = [('text', text_field)]
             super().__init__(filename, format='tsv', fields=fields)
 
@@ -43,9 +43,9 @@ class Data(object):
         self.dataset = Data.DataSet(self.text_field, filename)
         self.text_field.build_vocab(self.dataset)
 
-    def get_tenser(self, x: str):
+    def get_tensor(self, x: str):
         x = self.text_field.preprocess(x)
-        return self.text_field.numericalize([x])
+        return self.text_field.numericalize([x]).t()
 
 
 def generate(inf, ouf):
@@ -72,4 +72,5 @@ if __name__ == '__main__':
     ouf = os.path.join(os.path.dirname(__file__), 'sample.tsv')
     generate(inf, ouf)
     test_data = Data()
+    print(len(test_data.text_field.vocab))
     print(test_data.get_tenser('pick up the red cube'))
