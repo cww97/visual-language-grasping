@@ -84,6 +84,7 @@ class BaseNet(nn.Module):
                     m[1].weight.data.fill_(1)
                     m[1].bias.data.zero_()
 
+        print('')
         # Initialize output variable (for backprop)
         self.interm_feat = []
         self.output_prob = []

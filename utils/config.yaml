@@ -4,7 +4,7 @@ is_sim: true # false
 ## directory containing 3D mesh files (.obj) of objects to be added to simulation
 obj_mesh_dir: 'envs/objects/blocks'
 ## number of objects to add to simulation
-num_obj: 5
+num_obj: 3
 ## IP address to robot arm as TCP client (UR5)
 tcp_host_ip: '100.127.7.223'
 ## port to robot arm as TCP client (UR5)
@@ -40,11 +40,11 @@ test_preset_file: 'test-10-obj-01.txt'
 
 # ------ Pre-loading and logging options ------
 ## load pre-trained snapshot of model?
-load_snapshot: false
-snapshot_file: ~
+load_snapshot: true
+snapshot_file: 'logs/2020-03-30.20:16:18/models/snapshot-backup.reinforcement.pth'
 ## continue logging from previous session?
-continue_logging: false
-logging_directory: ~
+continue_logging: true
+logging_directory: logs/2020-03-30.20:16:18 # ~
 ## save visualizations of FCN predictions?
-save_visualizations: true # false
+save_visualizations: false
 

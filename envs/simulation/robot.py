@@ -48,7 +48,7 @@ class SimRobot(BaseRobot):
         # TODO
         # handle <-> ind <-> obj -> name
         # Just for debug
-        print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
+        # print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
         # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
 
         self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
@@ -126,6 +126,7 @@ class SimRobot(BaseRobot):
             time.sleep(2)
         self.prev_obj_positions = []
         self.obj_positions = []
+        self.get_instruction()  # nb
 
     def restart_sim(self):
         sim_ret, self.UR5_target_handle = vrep.simxGetObjectHandle(self.sim_client, 'UR5_target', vrep.simx_opmode_blocking)
@@ -263,7 +264,8 @@ class SimRobot(BaseRobot):
         color = utils.get_mush_color_name(self.obj_mesh_color[ind])
         shape = np.random.choice(self.mesh_name[self.mesh_list[self.obj_mesh_ind[ind]]])
         self.target_handle = self.object_handles[ind]
-        return instruction_template.format(color=color, shape=shape)
+        self.instruction = instruction_template.format(color=color, shape=shape)  # nb
+        return self.instruction
 
     def close_gripper(self, _async=False):
         gripper_motor_velocity = -0.5
@@ -310,8 +312,7 @@ class SimRobot(BaseRobot):
     # Primitives ----------------------------------------------------------
 
     def grasp(self, position, heightmap_rotation_angle, workspace_limits):
-        print('Executing: grasp at (%f, %f, %f)' %
-              (position[0], position[1], position[2]))
+        # print('Executing: grasp at (%f, %f, %f)' % (position[0], position[1], position[2]))
         # Compute tool orientation from heightmap rotation angle
         tool_rotation_angle = (heightmap_rotation_angle % np.pi) - np.pi / 2
 
@@ -374,8 +375,7 @@ class SimRobot(BaseRobot):
         return grasp_success and self.check_goal_reached(grasped_object_handle)
 
     def push(self, position, heightmap_rotation_angle, workspace_limits):
-        print('Executing: push at (%f, %f, %f)' %
-              (position[0], position[1], position[2]))
+        # print('Executing: push at (%f, %f, %f)' % (position[0], position[1], position[2]))
         # Compute tool orientation from heightmap rotation angle
         tool_rotation_angle = (heightmap_rotation_angle % np.pi) - np.pi / 2
 

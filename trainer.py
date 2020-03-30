@@ -34,19 +34,12 @@ class Trainer(object):
         elif self.method == 'reinforcement':
             self.model = reinforcement_net(embed_num=vocab, embed_dim=dim, drop_out=drop)
             self.future_reward_discount = future_reward_discount
-
             # Initialize Huber loss
             self.criterion = torch.nn.SmoothL1Loss(reduce=False).cuda()  # Huber losss
 
         # Load pre-trained model
         if load_snapshot:
-            # PyTorch v0.4 removes periods in state dict keys, but no backwards compatibility :(
-            loaded_snapshot_state_dict = torch.load(snapshot_file)
-            items = ('conv.1', 'norm.1', 'conv.2', 'norm.2')
-            for item in items:
-                self.loaded_snapshot_item(loaded_snapshot_state_dict, item)
-            self.model.load_state_dict(loaded_snapshot_state_dict)
-
+            self.model.load_state_dict(torch.load(snapshot_file))
             print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
 
         # Convert model from CPU to GPU
@@ -147,7 +140,6 @@ class Trainer(object):
         output_prob, state_feat = self.model.forward(
             instruction_tensor, input_color_data, input_depth_data, is_volatile, specific_rotation
         )
-        # print(len(output_prob), type(output_prob[0]), output_prob[0])
 
         if self.method == 'reactive':
 
@@ -183,7 +175,6 @@ class Trainer(object):
                         ]
                     ), axis=0)
 
-        # print("grasp_predictions = ", grasp_predictions)
         return grasp_predictions, state_feat
 
     def get_label_value(
@@ -215,8 +206,9 @@ class Trainer(object):
                 )
                 future_reward = np.max(next_grasp_predictions)
 
-            print('Current reward: %f' % (current_reward))
-            print('Future reward: %f' % (future_reward))
+            # print('Current reward: %f' % (current_reward))
+            # print('Future reward: %f' % (future_reward))
+            print('Reward: (Current = %f, Future = %f)' % (current_reward, future_reward))
             expected_reward = current_reward + self.future_reward_discount * future_reward
             print('Expected reward: %f + %f x %f = %f' % (
                 current_reward, self.future_reward_discount, future_reward, expected_reward
@@ -399,6 +391,6 @@ class Trainer(object):
 
 
 if __name__ == '__main__':
-    text_data = TextData()
-    t = text_data.get_tensor('balabala dsa pick up, the')
-    print(t)
+    loaded_snapshot_state_dict = torch.load('downloads/vpg-original-real-pretrained-30-obj.pth')
+    with open('model_dict.txt', 'w') as f:
+        f.write(str(loaded_snapshot_state_dict.keys()))

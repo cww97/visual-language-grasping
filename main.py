@@ -94,10 +94,9 @@ def main(args):
                 logger.write_to_log('predicted-value', trainer.predicted_value_log)
 
                 # Compute 3D position of pixel
-                print('Action: %s at (%d, %d, %d)' % (
-                    nonlocal_variables['primitive_action'], nonlocal_variables['best_pix_ind'][0],
-                    nonlocal_variables['best_pix_ind'][1], nonlocal_variables['best_pix_ind'][2]
-                ))
+                # print('Action: %s at (%d, %d, %d)' % (
+                #    nonlocal_variables['primitive_action'], nonlocal_variables['best_pix_ind'][0],
+                #    nonlocal_variables['best_pix_ind'][1], nonlocal_variables['best_pix_ind'][2]))
                 best_rotation_angle = np.deg2rad(nonlocal_variables['best_pix_ind'][0] * (360.0 / trainer.model.num_rotations))
                 best_pix_x = nonlocal_variables['best_pix_ind'][2]
                 best_pix_y = nonlocal_variables['best_pix_ind'][1]
@@ -132,7 +131,7 @@ def main(args):
                 # if nonlocal_variables['primitive_action'] == 'grasp':
                 nonlocal_variables['grasp_success'] = robot.grasp(
                     primitive_position, best_rotation_angle, args.workspace_limits)
-                print('Grasp successful: %r' % (nonlocal_variables['grasp_success']))
+                # print('Grasp successful: %r' % (nonlocal_variables['grasp_success']))
 
                 nonlocal_variables['executing_action'] = False
 
@@ -164,10 +163,6 @@ def main(args):
         if args.is_sim:
             robot.check_sim()
 
-        # cslnb
-        instruction = robot.get_instruction()
-        print('instruction: %s' % (instruction))
-
         # Get latest RGB-D image
         color_img, depth_img = robot.get_camera_data()
         depth_img = depth_img * robot.cam_depth_scale  # Apply depth scale from calibration
@@ -192,15 +187,13 @@ def main(args):
         if np.sum(stuff_count) < empty_threshold or (args.is_sim and sum(no_change_count) > 10):
             no_change_count = [0, 0]
             if args.is_sim:
-                print('Not enough objects in view (value: %d)! \
-                    Repositioning objects.' % (np.sum(stuff_count)))
+                print('Not enough objects in view (value: %d)! Repositioning objects.' % (np.sum(stuff_count)))
                 robot.restart_sim()
                 robot.add_objects()
                 if args.is_testing:  # If at end of test run, re-load original weights (before test run)
                     trainer.model.load_state_dict(torch.load(args.snapshot_file))
             else:
-                print('Not enough stuff on the table (value: %d)! \
-                    Flipping over bin of objects...' % (np.sum(stuff_count)))
+                print('Not enough stuff on the table (value: %d)! Flipping over bin of objects...' % (np.sum(stuff_count)))
                 robot.restart_real()
 
             trainer.clearance_log.append([trainer.iteration])
@@ -211,8 +204,9 @@ def main(args):
 
         if not exit_called:
             # Run F pass with network to get affordances
+            print('instruction: %s' % (robot.instruction))  # nb
             grasp_predictions, state_feat = trainer.forward(
-                instruction, color_heightmap, valid_depth_heightmap, is_volatile=True
+                robot.instruction, color_heightmap, valid_depth_heightmap, is_volatile=True
             )
             # Execute best primitive action on robot in another thread
             nonlocal_variables['executing_action'] = True
@@ -242,7 +236,7 @@ def main(args):
                 prev_grasp_success,
                 change_detected,
                 prev_grasp_predictions,
-                instruction,
+                robot.instruction,
                 color_heightmap,
                 valid_depth_heightmap
             )
@@ -252,8 +246,13 @@ def main(args):
             logger.write_to_log('reward-value', trainer.reward_value_log)
 
             # Back-propagate
-            trainer.backprop(instruction, prev_color_heightmap, prev_valid_depth_heightmap,
+            trainer.backprop(robot.instruction, prev_color_heightmap, prev_valid_depth_heightmap,
                              prev_primitive_action, prev_best_pix_ind, label_value)
+            if args.is_sim and prev_grasp_success:
+                print("grasp the right object, restart the simulation")
+                robot.restart_sim()
+                robot.add_objects()
+                # return
 
             # Adjust exploration probability
             # if not args.is_testing:
