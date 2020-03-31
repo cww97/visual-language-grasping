@@ -6,6 +6,9 @@ import torch
 import torch.nn.functional as F
 from scipy import ndimage
 from torch.autograd import Variable
+
+from envs.data import Data as TextData
+from envs.robot import State
 from models import reactive_net, reinforcement_net
 from utils import CrossEntropyLoss2d
 from envs.data import Data as TextData
@@ -194,15 +197,16 @@ class Trainer(object):
     ):
         if self.method == 'reactive':
             # label: 0 - grasp, 1 - failed grasp, 2 - no loss
-            label_value = 0 if grasp_success else 1
+            label_value = 0 if grasp_success == State.SUCCESS == State else 1
             print('Label value: %d' % (label_value))
             return label_value, label_value
 
         elif self.method == 'reinforcement':
             # Compute current reward, deal with put in the future
-            current_reward = 1.0 if grasp_success else 0.0
+            current_reward = 1.0 if grasp_success == State.SUCCESS else 0.0
+
             # Compute future reward
-            if not change_detected and not grasp_success:
+            if not change_detected and not grasp_success == State.SUCCESS:
                 future_reward = 0
             else:
                 next_grasp_predictions, next_state_feat = self.forward(

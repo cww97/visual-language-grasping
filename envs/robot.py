@@ -1,5 +1,12 @@
 from abc import ABCMeta
 from abc import abstractmethod
+from enum import Enum
+
+
+class State(Enum):
+    SUCCESS = 0
+    FAIL = 1
+    WRONG = 2
 
 
 class Robot(metaclass=ABCMeta):
