@@ -124,7 +124,7 @@ def main(args):
                     cv2.imwrite('visualization.grasp.png', grasp_pred_vis)
 
                 # Initialize variables that influence reward
-                nonlocal_variables['grasp_success'] = False
+                nonlocal_variables['grasp_success'] = None
                 # change_detected = False
 
                 # Execute primitive

@@ -7,6 +7,7 @@ import yaml
 import utils
 from . import vrep
 from ..robot import Robot as BaseRobot
+from ..robot import State
 
 
 class SimRobot(BaseRobot):
@@ -368,16 +369,15 @@ class SimRobot(BaseRobot):
             object_positions = np.asarray(self.get_obj_positions())
             object_positions = object_positions[:, 2]
             grasped_object_ind = np.argmax(object_positions)
+            assert isinstance(grasped_object_ind, int)
             grasped_object_handle = self.object_handles[grasped_object_ind]
-            vrep.simxSetObjectPosition(
-                self.sim_client, grasped_object_handle, -1,
-                (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1),
-                vrep.simx_opmode_blocking
-            )
-
-        # TODO:
-        # how to deal with picked up wrong object ?
-        return grasp_success and self.check_goal_reached(grasped_object_handle)
+            vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
+            if self.check_goal_reached(grasped_object_handle):
+                return State.SUCCESS
+            else:
+                return State.WRONG
+        else:
+            return State.FAIL
 
     def push(self, position, heightmap_rotation_angle, workspace_limits):
         # print('Executing: push at (%f, %f, %f)' % (position[0], position[1], position[2]))

@@ -2,6 +2,7 @@ matplotlib
 numpy
 opencv-python
 scipy
+tensorboardX
 torch
 torchvision
 torchtext
