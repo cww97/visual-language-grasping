@@ -343,7 +343,6 @@ def main(args):
         # Sync both action thread and training thread
         while nonlocal_variables['executing_action']:
             time.sleep(0.01)
-        print('?')
 
         if exit_called:
             break
