@@ -40,11 +40,11 @@ test_preset_file: 'test-10-obj-01.txt'
 
 # ------ Pre-loading and logging options ------
 ## load pre-trained snapshot of model?
-load_snapshot: false
-snapshot_file: 'logs/2020-03-30.20:16:18/models/snapshot-backup.reinforcement.pth'
+load_snapshot: true
+snapshot_file: 'logs/2020-03-31.13:55:28/models/snapshot-backup.reactive.pth'
 ## continue logging from previous session?
-continue_logging: false
-logging_directory: logs/2020-03-30.20:16:18 # ~
+continue_logging: true
+logging_directory: logs/2020-03-31.13:55:28 # ~
 ## save visualizations of FCN predictions?
 save_visualizations: false
 

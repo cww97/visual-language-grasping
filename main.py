@@ -130,7 +130,8 @@ def main(args):
                 # Execute primitive
                 # if nonlocal_variables['primitive_action'] == 'grasp':
                 nonlocal_variables['grasp_success'] = robot.grasp(
-                    primitive_position, best_rotation_angle, args.workspace_limits)
+                    primitive_position, best_rotation_angle, args.workspace_limits
+                )
                 # print('Grasp successful: %r' % (nonlocal_variables['grasp_success']))
 
                 nonlocal_variables['executing_action'] = False
@@ -333,7 +334,6 @@ def main(args):
                     print('Not enough prior training samples. Skipping experience replay.')
 
             # Save model snapshot
-            print('?')
             if not args.is_testing:
                 logger.save_backup_model(trainer.model, args.method)
                 if trainer.iteration % 50 == 0:
@@ -343,6 +343,7 @@ def main(args):
         # Sync both action thread and training thread
         while nonlocal_variables['executing_action']:
             time.sleep(0.01)
+        print('?')
 
         if exit_called:
             break

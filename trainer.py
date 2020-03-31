@@ -9,6 +9,7 @@ from torch.autograd import Variable
 from models import reactive_net, reinforcement_net
 from utils import CrossEntropyLoss2d
 from envs.data import Data as TextData
+import pdb
 
 
 class Trainer(object):
@@ -147,14 +148,16 @@ class Trainer(object):
             for rotate_idx in range(len(output_prob)):
                 if rotate_idx == 0:
                     grasp_predictions = F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[
-                        :, 0, (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
+                        :, 0,
+                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
                         (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
                     ]
                 else:
                     grasp_predictions = np.concatenate((
                         grasp_predictions,
                         F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[
-                            :, 0, (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
+                            :, 0,
+                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
                             (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
                         ]
                     ), axis=0)
@@ -165,13 +168,16 @@ class Trainer(object):
             for rotate_idx in range(len(output_prob)):
                 if rotate_idx == 0:
                     grasp_predictions = output_prob[rotate_idx][0].cpu().data.numpy()[
-                        :, 0, int(padding_width / 2):int(color_heightmap_2x.shape[0] / 2 - padding_width / 2),
-                        int(padding_width / 2):int(color_heightmap_2x.shape[0] / 2 - padding_width / 2)]
+                        :, 0,
+                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
+                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
+                    ]
                 else:
                     grasp_predictions = np.concatenate((
                         grasp_predictions, output_prob[rotate_idx][0].cpu().data.numpy()[
-                            :, 0, int(padding_width / 2): int(color_heightmap_2x.shape[0] / 2 - padding_width / 2),
-                            int(padding_width / 2): int(color_heightmap_2x.shape[0] / 2 - padding_width / 2)
+                            :, 0,
+                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
+                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
                         ]
                     ), axis=0)
 
@@ -212,120 +218,41 @@ class Trainer(object):
 
     # Compute labels and back-propagate
     def backprop(self, instruction, color_heightmap, depth_heightmap, primitive_action, best_pix_ind, label_value):
-
-        if self.method == 'reactive':
-
-            # Compute fill value
-            fill_value = 2
-
-            # Compute labels
-            label = np.zeros((1, 320, 320)) + fill_value
-            action_area = np.zeros((224, 224))
-            action_area[best_pix_ind[1]][best_pix_ind[2]] = 1
-            tmp_label = np.zeros((224, 224)) + fill_value
-            tmp_label[action_area > 0] = label_value
-            label[0, 48:(320 - 48), 48:(320 - 48)] = tmp_label
-
-            # Compute loss and backward pass
-            self.optimizer.zero_grad()
-            loss_value = 0
-
-            if primitive_action == 'grasp':
-                # Do for-ward pass with specified rotation (to save gradients)
-                grasp_predictions, state_feat = self.forward(
-                    instruction, color_heightmap, depth_heightmap,
-                    is_volatile=False, specific_rotation=best_pix_ind[0]
-                )
-
-                loss = self.grasp_criterion(
-                    self.model.output_prob[0][0],
-                    Variable(torch.from_numpy(label).long().cuda())
-                )
-                loss.backward()
-                try: loss_value += loss.cpu().data.numpy()[0]
-                except IndexError: loss_value += loss.cpu().data.numpy()
-
-                # Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
-                opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
-
-                grasp_predictions, state_feat = self.forward(
-                    instruction, color_heightmap, depth_heightmap,
-                    is_volatile=False, specific_rotation=opposite_rotate_idx
-                )
-
-                loss = self.grasp_criterion(
-                    self.model.output_prob[0][0],
-                    Variable(torch.from_numpy(label).long().cuda())
-                )
-                loss.backward()
-                try: loss_value += loss.cpu().data.numpy()[0]
-                except IndexError: loss_value += loss.cpu().data.numpy()
-
-                loss_value = loss_value / 2
-
-            print('Training loss: %f' % (loss_value))
-            self.optimizer.step()
-
+        fill_value = 2 if self.method == 'reactive' else 0  # Compute fill value, 2:no loss
+        # Compute labels
+        label = np.zeros((1, 320, 320)) + fill_value
+        label[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = label_value
+        # Compute label mask
+        if self.method == 'reactive': label_weights = None  # just a fill
         elif self.method == 'reinforcement':
+            label_weights = np.zeros(label.shape)  # Compute label mask
+            label_weights[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = 1
 
-            # Compute labels
-            label = np.zeros((1, 320, 320))
-            action_area = np.zeros((224, 224))
-            action_area[best_pix_ind[1]][best_pix_ind[2]] = 1
-            tmp_label = np.zeros((224, 224))
-            tmp_label[action_area > 0] = label_value
-            label[0, 48:(320 - 48), 48:(320 - 48)] = tmp_label
+        # Compute loss and backward pass
+        self.optimizer.zero_grad()
+        loss_value = 0
+        if primitive_action == 'grasp':
+            # Do for-ward pass with specified rotation (to save gradients)
+            loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap, best_pix_ind[0], label, label_weights)
+            # Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
+            opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
+            loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap, opposite_rotate_idx, label, label_weights)
+            loss_value = loss_value / 2
 
-            # Compute label mask
-            label_weights = np.zeros(label.shape)
-            tmp_label_weights = np.zeros((224, 224))
-            tmp_label_weights[action_area > 0] = 1
-            label_weights[0, 48:(320 - 48), 48:(320 - 48)] = tmp_label_weights
-
-            # Compute loss and backward pass
-            self.optimizer.zero_grad()
-            loss_value = 0
-
-            if primitive_action == 'grasp':
-
-                # Do for-ward pass with specified rotation (to save gradients)
-                grasp_predictions, state_feat = self.forward(
-                    instruction, color_heightmap, depth_heightmap,
-                    is_volatile=False, specific_rotation=best_pix_ind[0]
-                )
-
-                loss = self.criterion(
-                    self.model.output_prob[0][0].view(1, 320, 320),
-                    Variable(torch.from_numpy(label).float().cuda())
-                ) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-                loss = loss.sum()
-                loss.backward()
-                try:
-                    loss_value = loss.cpu().data.numpy()[0]
-                except IndexError:
-                    loss_value = loss.cpu().data.numpy()
-
-                opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
-
-                grasp_predictions, state_feat = self.forward(
-                    instruction, color_heightmap, depth_heightmap,
-                    is_volatile=False, specific_rotation=opposite_rotate_idx
-                )
-
-                loss = self.criterion(self.model.output_prob[0][0].view(1, 320, 320), Variable(
-                    torch.from_numpy(label).float().cuda())) * Variable(
-                        torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-
-                loss = loss.sum()
-                loss.backward()
-                try: loss_value = loss.cpu().data.numpy()[0]
-                except IndexError: loss_value = loss.cpu().data.numpy()
-
-                loss_value = loss_value / 2
-
-            print('Training loss: %f' % (loss_value))
-            self.optimizer.step()
+        print('Training loss: %f' % (loss_value))
+        self.optimizer.step()
         return loss_value
+
+    def _backward_loss(self, instruction, color_heightmap, depth_heightmap, rotate_idx, label, label_weights=None):
+        _, _ = self.forward(instruction, color_heightmap, depth_heightmap, False, rotate_idx)
+        if self.method == 'reactive':
+            loss = self.grasp_criterion(self.model.output_prob[0][0], Variable(torch.from_numpy(label).long().cuda()))
+        else:
+            loss = self.criterion(
+                self.model.output_prob[0][0].view(1, 320, 320), Variable(torch.from_numpy(label).float().cuda())
+            ) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
+        loss.backward()
+        return loss.cpu().data.numpy()
 
     def get_prediction_vis(self, predictions, color_heightmap, best_pix_ind):
 
