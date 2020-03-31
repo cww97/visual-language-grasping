@@ -193,6 +193,8 @@ class SimRobot(BaseRobot):
         # TODO
         # goal_reached = self.get_task_score() == self.num_obj
         goal_reached = self.target_handle == handle
+        if goal_reached:
+            print('!!!!!!!!!!!!!!!')
         return goal_reached
 
     def get_obj_positions(self):
@@ -367,8 +369,11 @@ class SimRobot(BaseRobot):
             object_positions = object_positions[:, 2]
             grasped_object_ind = np.argmax(object_positions)
             grasped_object_handle = self.object_handles[grasped_object_ind]
-
-            vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
+            vrep.simxSetObjectPosition(
+                self.sim_client, grasped_object_handle, -1,
+                (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1),
+                vrep.simx_opmode_blocking
+            )
 
         # TODO:
         # how to deal with picked up wrong object ?

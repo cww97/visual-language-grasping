@@ -4,7 +4,6 @@ import argparse
 import os
 import threading
 import time
-
 import cv2
 import numpy as np
 import torch
@@ -14,12 +13,13 @@ import utils
 from envs.real.robot import RealRobot
 from envs.simulation.robot import SimRobot
 from envs.simulation.robot import TestRobot
-
 from utils.config import Config
+from tensorboardX import SummaryWriter
 
 
 def main(args):
     np.random.seed(args.random_seed)  # Set random seed
+    writer = SummaryWriter()  # tensorboard
 
     # Initialize pick-and-place system (camera and robot)
     if args.is_sim:
@@ -246,8 +246,19 @@ def main(args):
             logger.write_to_log('reward-value', trainer.reward_value_log)
 
             # Back-propagate
-            trainer.backprop(robot.instruction, prev_color_heightmap, prev_valid_depth_heightmap,
-                             prev_primitive_action, prev_best_pix_ind, label_value)
+            loss_value = trainer.backprop(robot.instruction, prev_color_heightmap, prev_valid_depth_heightmap,
+                                          prev_primitive_action, prev_best_pix_ind, label_value)
+
+            if args.method == 'reactive':
+                writer.add_scalar('reactive/grasp_success', prev_grasp_success, trainer.iteration)
+                writer.add_scalar('reactive/label', label_value, trainer.iteration)
+                writer.add_scalar('reactive/loss', loss_value, trainer.iteration)
+            elif args.method == 'reinforcement':
+                writer.add_scalar('RL/grasp_success', prev_grasp_success, trainer.iteration)
+                writer.add_scalar('RL/expected_reward', label_value, trainer.iteration)
+                writer.add_scalar('RL/current_reward', prev_reward_value, trainer.iteration)
+                writer.add_scalar('RL/loss', loss_value, trainer.iteration)
+
             if args.is_sim and prev_grasp_success:
                 print("grasp the right object, restart the simulation")
                 robot.restart_sim()
@@ -315,14 +326,14 @@ def main(args):
                         sample_best_pix_ind, sample_reward_value
                     )
 
-                    # Recompute prediction value
-                    # if sample_primitive_action == 'grasp':
+                    # Recompute prediction value, if sample_primitive_action == 'grasp':
                     trainer.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
 
                 else:
                     print('Not enough prior training samples. Skipping experience replay.')
 
             # Save model snapshot
+            print('?')
             if not args.is_testing:
                 logger.save_backup_model(trainer.model, args.method)
                 if trainer.iteration % 50 == 0:

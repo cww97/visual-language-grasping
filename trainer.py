@@ -193,10 +193,8 @@ class Trainer(object):
             return label_value, label_value
 
         elif self.method == 'reinforcement':
-
             # Compute current reward, deal with put in the future
             current_reward = 1.0 if grasp_success else 0.0
-
             # Compute future reward
             if not change_detected and not grasp_success:
                 future_reward = 0
@@ -205,9 +203,6 @@ class Trainer(object):
                     instruction, next_color_heightmap, next_depth_heightmap, is_volatile=True
                 )
                 future_reward = np.max(next_grasp_predictions)
-
-            # print('Current reward: %f' % (current_reward))
-            # print('Future reward: %f' % (future_reward))
             print('Reward: (Current = %f, Future = %f)' % (current_reward, future_reward))
             expected_reward = current_reward + self.future_reward_discount * future_reward
             print('Expected reward: %f + %f x %f = %f' % (
@@ -330,6 +325,7 @@ class Trainer(object):
 
             print('Training loss: %f' % (loss_value))
             self.optimizer.step()
+        return loss_value
 
     def get_prediction_vis(self, predictions, color_heightmap, best_pix_ind):
 

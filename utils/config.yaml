@@ -20,7 +20,7 @@ random_seed: 1234
 
 # ------------- Algorithm options -------------
 ## 'set to 'reactive' (supervised learning) or 'reinforcement' (reinforcement learning ie Q-learning)
-method: 'reinforcement'
+method: 'reactive' # 'reinforcement'
 ## use immediate rewards (from change detection) for pushing?
 # push_rewards: false
 future_reward_discount: 0.5
@@ -40,10 +40,10 @@ test_preset_file: 'test-10-obj-01.txt'
 
 # ------ Pre-loading and logging options ------
 ## load pre-trained snapshot of model?
-load_snapshot: true
+load_snapshot: false
 snapshot_file: 'logs/2020-03-30.20:16:18/models/snapshot-backup.reinforcement.pth'
 ## continue logging from previous session?
-continue_logging: true
+continue_logging: false
 logging_directory: logs/2020-03-30.20:16:18 # ~
 ## save visualizations of FCN predictions?
 save_visualizations: false
