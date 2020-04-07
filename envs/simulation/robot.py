@@ -34,7 +34,7 @@ class SimRobot(BaseRobot):
         try:
             with open(os.path.join(obj_mesh_dir, 'blocks.yml')) as f:
                 yaml_dict = yaml.safe_load(f)
-            groups = yaml_dict['groups']
+            self.groups = yaml_dict['groups']
             self.mesh_name = yaml_dict['names']
             for obj in self.mesh_list:
                 if obj not in self.mesh_name.keys():
@@ -42,17 +42,6 @@ class SimRobot(BaseRobot):
         except Exception:
             print('Failed to read block names/groups')
             exit(1)
-
-        # Randomly choose objects to add to scene
-        group_chosen = np.random.choice(groups, size=self.num_obj, replace=False)
-        self.obj_mesh_ind = np.array([self.mesh_list.index(np.random.choice(obj)) for obj in group_chosen])
-        # TODO
-        # handle <-> ind <-> obj -> name
-        # Just for debug
-        # print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
-        # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
-
-        self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
 
         # Make sure to have the server side running in V-REP:
         # in a child script of a V-REP scene, add following command
@@ -109,7 +98,18 @@ class SimRobot(BaseRobot):
         self.bg_depth_img = self.bg_depth_img * self.cam_depth_scale
 
     def add_objects(self):
+        # Randomly choose objects to add to scene
+        group_chosen = np.random.choice(self.groups, size=self.num_obj, replace=False)
+        self.obj_mesh_ind = np.array([self.mesh_list.index(np.random.choice(obj)) for obj in group_chosen])
+        # TODO
+        # handle <-> ind <-> obj -> name
+        # Just for debug
+        # print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
+        # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
+
+        self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
         # Add each object to robot workspace at x,y location and orientation (random or pre-loaded)
+        self.object_handles = []
         for object_idx in range(len(self.obj_mesh_ind)):
             curr_mesh_file = os.path.join(self.obj_mesh_dir, self.mesh_list[self.obj_mesh_ind[object_idx]])
             curr_shape_name = 'shape_%02d' % object_idx
@@ -191,11 +191,8 @@ class SimRobot(BaseRobot):
         return np.sum(key_nn_idx == np.asarray(range(self.num_obj)) % 4)
 
     def check_goal_reached(self, handle):
-        # TODO
         # goal_reached = self.get_task_score() == self.num_obj
         goal_reached = self.target_handle == handle
-        if goal_reached:
-            print('!!!!!!!!!!!!!!!')
         return goal_reached
 
     def get_obj_positions(self):
@@ -366,10 +363,10 @@ class SimRobot(BaseRobot):
 
         # Move the grasped object elsewhere
         if grasp_success:
+            # import pdb; pdb.set_trace()
             object_positions = np.asarray(self.get_obj_positions())
             object_positions = object_positions[:, 2]
             grasped_object_ind = np.argmax(object_positions)
-            assert isinstance(grasped_object_ind, int)
             grasped_object_handle = self.object_handles[grasped_object_ind]
             vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
             if self.check_goal_reached(grasped_object_handle):

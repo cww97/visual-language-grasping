@@ -4,7 +4,7 @@ is_sim: true # false
 ## directory containing 3D mesh files (.obj) of objects to be added to simulation
 obj_mesh_dir: 'envs/objects/blocks'
 ## number of objects to add to simulation
-num_obj: 3
+num_obj: 1
 ## IP address to robot arm as TCP client (UR5)
 tcp_host_ip: '100.127.7.223'
 ## port to robot arm as TCP client (UR5)
@@ -25,9 +25,9 @@ method: 'reactive' # 'reinforcement'
 # push_rewards: false
 future_reward_discount: 0.5
 ## use prioritized experience replay?
-experience_replay: false
+experience_replay: true
 ## use handcrafted grasping algorithm when grasping fails too many times in a row during training?
-heuristic_bootstrap: false
+heuristic_bootstrap: true
 explore_rate_decay: false
 grasp_only: false
 
@@ -40,11 +40,11 @@ test_preset_file: 'test-10-obj-01.txt'
 
 # ------ Pre-loading and logging options ------
 ## load pre-trained snapshot of model?
-load_snapshot: true
-snapshot_file: 'logs/2020-03-31.13:55:28/models/snapshot-backup.reactive.pth'
+load_snapshot: false
+snapshot_file: 'logs/2020-04-02.22:40:14/models/snapshot-backup.reactive.pth'
 ## continue logging from previous session?
-continue_logging: true
-logging_directory: logs/2020-03-31.13:55:28 # ~
+continue_logging: false
+logging_directory: logs/2020-04-02.22:40:14 # ~
 ## save visualizations of FCN predictions?
 save_visualizations: false
 

@@ -1,10 +1,8 @@
 #!/usr/bin/env python
 
 import argparse
-import os
 import threading
 import time
-import cv2
 import numpy as np
 import torch
 from trainer import Trainer
@@ -15,352 +13,294 @@ from envs.simulation.robot import SimRobot
 from envs.simulation.robot import TestRobot
 from utils.config import Config
 from tensorboardX import SummaryWriter
+from envs.robot import State
 
 
-def main(args):
-    np.random.seed(args.random_seed)  # Set random seed
-    writer = SummaryWriter()  # tensorboard
+class Solver():
 
-    # Initialize pick-and-place system (camera and robot)
-    if args.is_sim:
-        if args.test_preset_file:
-            robot = TestRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits, args.test_preset_file)
+    def __init__(self, args):
+        np.random.seed(args.random_seed)  # Set random seed
+        self.writer = SummaryWriter()  # tensorboard
+
+        # test option
+        self.is_testing = args.is_testing
+        self.max_test_trials = args.max_test_trials
+
+        # algorightm options
+        self.method = args.method
+        self.experience_replay = args.experience_replay
+        self.heuristic_bootstrap = args.heuristic_bootstrap
+        self.save_visualizations = args.save_visualizations
+
+        # Initialize pick-and-place system (camera and robot)
+        self.is_sim = args.is_sim
+        self.workspace_limits = args.workspace_limits
+        self.heightmap_resolution = args.heightmap_resolution
+        if self.is_sim:
+            if args.test_preset_file:
+                self.robot = TestRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits, args.test_preset_file)
+            else:
+                self.robot = SimRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits)
         else:
-            robot = SimRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits)
-    else:
-        robot = RealRobot(args.tcp_host_ip, args.tcp_port, args.rtc_host_ip, args.rtc_port, args.workspace_limits)
+            self.robot = RealRobot(args.tcp_host_ip, args.tcp_port, args.rtc_host_ip, args.rtc_port, args.workspace_limits)
 
-    # Initialize trainer
-    trainer = Trainer(args.method, args.future_reward_discount,
-                      args.is_testing, args.load_snapshot, args.snapshot_file)
+        # Initialize trainer
+        self.snapshot_file = args.snapshot_file
+        self.trainer = Trainer(self.method, args.future_reward_discount,
+                               self.is_testing, args.load_snapshot, self.snapshot_file)
 
-    # Initialize data logger
-    logger = Logger(args.continue_logging, args.logging_directory)
-    # Save camera intrinsics and pose
-    logger.save_camera_info(robot.cam_intrinsics, robot.cam_pose, robot.cam_depth_scale)
-    # Save heightmap parameters
-    logger.save_heightmap_info(args.workspace_limits, args.heightmap_resolution)
-    # Find last executed iteration of pre-loaded log, and load execution info and RL variables
-    if args.continue_logging:
-        trainer.preload(logger.transitions_directory)
+        # Initialize data logger
+        self.logger = Logger(args.continue_logging, args.logging_directory)
+        # Save camera intrinsics and pose
+        self.logger.save_camera_info(self.robot.cam_intrinsics, self.robot.cam_pose, self.robot.cam_depth_scale)
+        # Save heightmap parameters
+        self.logger.save_heightmap_info(args.workspace_limits, self.heightmap_resolution)
 
-    # Initialize variables for heuristic bootstrapping and exploration probability
-    no_change_count = [2, 2] if not args.is_testing else [0, 0]
+        # Find last executed iteration of pre-loaded log, and load execution info and RL variables
+        if args.continue_logging:
+            self.trainer.preload(self.logger.transitions_directory)
+        # Initialize variables for heuristic bootstrapping and exploration probability
+        self.no_change_cnt = 2 if not args.is_testing else 0
 
-    # Quick hack for nonlocal memory between threads in Python 2
-    nonlocal_variables = {'executing_action': False,
-                          'primitive_action': None,
-                          'best_pix_ind': None,
-                          'grasp_success': False}
+        # between threads(action and training)
+        self.executing_action = False  # lock
+        self.grasp_predictions = None
+        self.best_pix_idx = None
+        self.color_heightmap = None
+        self.valid_depth_heightmap = None
+        self.grasp_success = None
 
-    # Parallel thread to process network output and execute actions
-    # -------------------------------------------------------------
-    def process_actions():
-
+    def _process_actions(self):
+        # Parallel thread to process network output and execute actions
         while True:
-            if nonlocal_variables['executing_action']:
+            if self.executing_action:
+                self._get_best_pix()
+                best_rotation_angle, primitive_position = self._get_action_data()
 
-                best_grasp_conf = np.max(grasp_predictions)
-                print('Primitive confidence scores: %f (grasp)' % (best_grasp_conf))
-                nonlocal_variables['primitive_action'] = 'grasp'
-                explore_actions = False
-                trainer.is_exploit_log.append([0 if explore_actions else 1])
-                logger.write_to_log('is-exploit', trainer.is_exploit_log)
-
-                # If heuristic bootstrapping is enabled: if change has not been detected more than 2 times,
-                # execute heuristic algorithm to detect grasps
-                # NOTE: typically not necessary and can reduce final performance.
-                if args.heuristic_bootstrap and nonlocal_variables['primitive_action'] == 'grasp' and no_change_count[1] >= 2:
-                    print('Change not detected for more than two grasps. Running heuristic grasping.')
-                    nonlocal_variables['best_pix_ind'] = trainer.grasp_heuristic(valid_depth_heightmap)
-                    no_change_count[1] = 0
-                    predicted_value = grasp_predictions[nonlocal_variables['best_pix_ind']]
-                    use_heuristic = True
-                else:
-                    use_heuristic = False
-
-                    # Get pixel location and rotation with highest affordance
-                    # prediction from heuristic algorithms (rotation, y, x)
-                    if nonlocal_variables['primitive_action'] == 'grasp':
-                        nonlocal_variables['best_pix_ind'] = np.unravel_index(
-                            np.argmax(grasp_predictions), grasp_predictions.shape)
-                        predicted_value = np.max(grasp_predictions)
-
-                trainer.use_heuristic_log.append([1 if use_heuristic else 0])
-                logger.write_to_log('use-heuristic', trainer.use_heuristic_log)
-
-                # Save predicted confidence value
-                trainer.predicted_value_log.append([predicted_value])
-                logger.write_to_log('predicted-value', trainer.predicted_value_log)
-
-                # Compute 3D position of pixel
-                # print('Action: %s at (%d, %d, %d)' % (
-                #    nonlocal_variables['primitive_action'], nonlocal_variables['best_pix_ind'][0],
-                #    nonlocal_variables['best_pix_ind'][1], nonlocal_variables['best_pix_ind'][2]))
-                best_rotation_angle = np.deg2rad(nonlocal_variables['best_pix_ind'][0] * (360.0 / trainer.model.num_rotations))
-                best_pix_x = nonlocal_variables['best_pix_ind'][2]
-                best_pix_y = nonlocal_variables['best_pix_ind'][1]
-                primitive_position = [
-                    best_pix_x * args.heightmap_resolution +
-                    args.workspace_limits[0][0], best_pix_y * args.heightmap_resolution + args.workspace_limits[1][0],
-                    valid_depth_heightmap[best_pix_y][best_pix_x] + args.workspace_limits[2][0]
-                ]
-
-                # Save executed primitive
-
-                # if nonlocal_variables['primitive_action'] == 'grasp':
-                trainer.executed_action_log.append([
-                    1, nonlocal_variables['best_pix_ind'][0],
-                    nonlocal_variables['best_pix_ind'][1],
-                    nonlocal_variables['best_pix_ind'][2]
-                ])  # 1 - grasp
-                logger.write_to_log('executed-action', trainer.executed_action_log)
-
-                # Visualize executed primitive, and affordances
-                if args.save_visualizations:
-                    grasp_pred_vis = trainer.get_prediction_vis(
-                        grasp_predictions, color_heightmap, nonlocal_variables['best_pix_ind'])
-                    logger.save_visualizations(trainer.iteration, grasp_pred_vis, 'grasp')
-                    cv2.imwrite('visualization.grasp.png', grasp_pred_vis)
-
-                # Initialize variables that influence reward
-                nonlocal_variables['grasp_success'] = None
-                # change_detected = False
-
-                # Execute primitive
-                # if nonlocal_variables['primitive_action'] == 'grasp':
-                nonlocal_variables['grasp_success'] = robot.grasp(
-                    primitive_position, best_rotation_angle, args.workspace_limits
+                # Initialize variables that influence reward TODO 这句话是脱裤子放屁吗
+                self.grasp_success = None
+                self.grasp_success = self.robot.grasp(  # Execute
+                    primitive_position, best_rotation_angle, self.workspace_limits
                 )
-                # print('Grasp successful: %r' % (nonlocal_variables['grasp_success']))
 
-                nonlocal_variables['executing_action'] = False
-
+                self.executing_action = False  # release the lock
             time.sleep(0.01)
 
-    action_thread = threading.Thread(target=process_actions)
-    action_thread.daemon = True
-    action_thread.start()
-    exit_called = False
-    # -------------------------------------------------------------
-    # -------------------------------------------------------------
+    def _get_best_pix(self):
+        best_grasp_conf = np.max(self.grasp_predictions)
+        print('Primitive confidence scores: %f (grasp)' % (best_grasp_conf))
 
-    prev_color_img = None
-    # prev_depth_img = None
-    prev_color_heightmap = None
-    prev_depth_heightmap = None
-    prev_valid_depth_heightmap = None
-    prev_grasp_success = None
-    prev_primitive_action = None
-    prev_grasp_predictions = None
-    prev_best_pix_ind = None
+        # If heuristic bootstrapping is enabled: if change has not been detected more than 2 times,
+        # execute heuristic algorithm to detect grasps
+        # NOTE: typically not necessary and can reduce final performance.
+        if self.heuristic_bootstrap and self.no_change_cnt >= 5:
+            print('Change not detected for more than 2 grasps. Running **heuristic grasping**.')
+            self.best_pix_idx = self.trainer.grasp_heuristic(self.valid_depth_heightmap)
+            # self.no_change_cnt = 0
+            # import pdb; pdb.set_trace()
+            predicted_value = self.grasp_predictions[self.best_pix_idx]
+            use_heuristic = True
+        else:
+            use_heuristic = False
 
-    # Start main training/testing loop
-    while True:
-        print('\n%s iteration: %d' % ('Testing' if args.is_testing else 'Training', trainer.iteration))
-        iteration_time_0 = time.time()
+            # Get pixel location and rotation with highest affordance
+            # prediction from heuristic algorithms (rotation, y, x)
+            self.best_pix_idx = np.unravel_index(np.argmax(self.grasp_predictions), self.grasp_predictions.shape)
+            predicted_value = np.max(self.grasp_predictions)
 
-        # Make sure simulation is still stable (if not, reset simulation)
-        if args.is_sim:
-            robot.check_sim()
+        self.trainer.use_heuristic_log.append([1 if use_heuristic else 0])
+        self.logger.write_to_log('use-heuristic', self.trainer.use_heuristic_log)
 
+        # Save predicted confidence value
+        self.trainer.predicted_value_log.append([predicted_value])
+        self.logger.write_to_log('predicted-value', self.trainer.predicted_value_log)
+
+        # Visualize executed primitive, and affordances
+        if self.save_visualizations:
+            grasp_pred_vis = self.trainer.get_prediction_vis(
+                self.grasp_predictions, self.color_heightmap, self.best_pix_idx
+            )
+            self.logger.save_visualizations(self.trainer.iteration, grasp_pred_vis, 'grasp')
+            # cv2.imwrite('visualization.grasp.png', grasp_pred_vis)
+
+    def _get_action_data(self):
+        # Compute 3D position of pixel
+        # print('Action: %s at (%d, %d, %d)' % (
+        best_rotation_angle = np.deg2rad(self.best_pix_idx[0] * (360.0 / self.trainer.model.num_rotations))
+        best_pix_x = self.best_pix_idx[2]
+        best_pix_y = self.best_pix_idx[1]
+        primitive_position = [
+            best_pix_x * self.heightmap_resolution +
+            self.workspace_limits[0][0], best_pix_y * self.heightmap_resolution + self.workspace_limits[1][0],
+            self.valid_depth_heightmap[best_pix_y][best_pix_x] + self.workspace_limits[2][0]
+        ]
+
+        self.trainer.executed_action_log.append([
+            1, self.best_pix_idx[0],
+            self.best_pix_idx[1],
+            self.best_pix_idx[2]
+        ])  # 1 - grasp
+        self.logger.write_to_log('executed-action', self.trainer.executed_action_log)
+        return best_rotation_angle, primitive_position
+
+    def main(self):
+        action_thread = threading.Thread(target=self._process_actions)
+        action_thread.daemon = True
+        action_thread.start()
+        self.exit_called = False
+
+        prev_color_heightmap = None
+        prev_depth_heightmap = None
+        prev_valid_depth_heightmap = None
+        prev_grasp_success = None
+        prev_grasp_predictions = None
+        prev_best_pix_idx = None
+
+        # Start main training/testing loop
+        while True:
+            print('\n%s iteration: %d' % ('Testing' if self.is_testing else 'Training', self.trainer.iteration))
+            iteration_time_0 = time.time()
+
+            # Make sure simulation is still stable (if not, reset simulation)
+            if self.is_sim: self.robot.check_sim()
+            depth_heightmap = self._get_imgs()
+            if self._check_restart(prev_grasp_success): continue
+
+            if not self.exit_called:  # Run For-ward pass with network to get affordances
+                print('instruction: %s' % (self.robot.instruction))  # nb
+                self.grasp_predictions, _ = self.trainer.forward(
+                    self.robot.instruction, self.color_heightmap, self.valid_depth_heightmap, is_volatile=True
+                )
+                self.executing_action = True  # Robot: Execute action in another thread
+
+            # Run training iteration in current thread (aka training thread)
+            if prev_color_heightmap is not None:
+                change_detected = self._detect_changes(depth_heightmap, prev_depth_heightmap, prev_grasp_success)
+
+                # Compute training labels
+                label_value, reward_value = self.trainer.get_label_value(
+                    prev_grasp_success, change_detected, prev_grasp_predictions,
+                    self.robot.instruction, self.color_heightmap, self.valid_depth_heightmap
+                )
+
+                # Back-propagate
+                loss_value = self.trainer.backprop(self.robot.instruction, prev_color_heightmap, prev_valid_depth_heightmap,
+                                                   prev_best_pix_idx, label_value)
+
+                if self.experience_replay and not self.is_testing:
+                    self.trainer.experience_replay(reward_value, self.logger)
+
+                self._log_board_save(prev_grasp_success, label_value, reward_value, loss_value)
+
+            # Sync both action thread and training thread
+            while self.executing_action: time.sleep(0.01)
+            if self.exit_called: break
+
+            # Save information for next training step
+            prev_color_heightmap = self.color_heightmap.copy()
+            prev_depth_heightmap = depth_heightmap.copy()
+            prev_valid_depth_heightmap = self.valid_depth_heightmap.copy()
+            prev_grasp_success = self.grasp_success
+            prev_grasp_predictions = self.grasp_predictions.copy()
+            prev_best_pix_idx = self.best_pix_idx
+
+            self.trainer.iteration += 1
+            iteration_time_1 = time.time()
+            print('Time elapsed: %f' % (iteration_time_1 - iteration_time_0))
+
+    def _get_imgs(self):
         # Get latest RGB-D image
-        color_img, depth_img = robot.get_camera_data()
-        depth_img = depth_img * robot.cam_depth_scale  # Apply depth scale from calibration
+        color_img, depth_img = self.robot.get_camera_data()
+        depth_img = depth_img * self.robot.cam_depth_scale  # Apply depth scale from calibration
 
         # Get heightmap from RGB-D image (by re-projecting 3D point cloud)
-        color_heightmap, depth_heightmap = utils.get_heightmap(
-            color_img, depth_img, robot.cam_intrinsics,
-            robot.cam_pose, args.workspace_limits, args.heightmap_resolution)
-        valid_depth_heightmap = depth_heightmap.copy()
-        valid_depth_heightmap[np.isnan(valid_depth_heightmap)] = 0
+        self.color_heightmap, depth_heightmap = utils.get_heightmap(
+            color_img, depth_img, self.robot.cam_intrinsics,
+            self.robot.cam_pose, self.workspace_limits, self.heightmap_resolution
+        )
+        self.valid_depth_heightmap = depth_heightmap.copy()
+        self.valid_depth_heightmap[np.isnan(self.valid_depth_heightmap)] = 0
 
         # Save RGB-D images and RGB-D heightmaps
-        logger.save_images(trainer.iteration, color_img, depth_img, '0')
-        logger.save_heightmaps(trainer.iteration, color_heightmap, valid_depth_heightmap, '0')
+        self.logger.save_instruction(self.trainer.iteration, self.robot.instruction, '0')
+        self.logger.save_images(self.trainer.iteration, color_img, depth_img, '0')
+        self.logger.save_heightmaps(self.trainer.iteration, self.color_heightmap, self.valid_depth_heightmap, '0')
 
+        return depth_heightmap
+
+    def _check_restart(self, prev_grasp_success):
         # Reset simulation or pause real-world training if table is empty
-        stuff_count = np.zeros(valid_depth_heightmap.shape)
-        stuff_count[valid_depth_heightmap > 0.02] = 1
-        empty_threshold = 300 if not (args.is_sim and args.is_testing) else 10
+        stuff_count = np.zeros(self.valid_depth_heightmap.shape)
+        stuff_count[self.valid_depth_heightmap > 0.02] = 1
+        empty_threshold = 300 if not (self.is_sim and self.is_testing) else 10
         # TODO
-        # if args.is_sim and args.is_testing: empty_threshold = 10
-        if np.sum(stuff_count) < empty_threshold or (args.is_sim and sum(no_change_count) > 10):
-            no_change_count = [0, 0]
-            if args.is_sim:
-                print('Not enough objects in view (value: %d)! Repositioning objects.' % (np.sum(stuff_count)))
-                robot.restart_sim()
-                robot.add_objects()
-                if args.is_testing:  # If at end of test run, re-load original weights (before test run)
-                    trainer.model.load_state_dict(torch.load(args.snapshot_file))
+        # if self.is_sim and self.is_testing: empty_threshold = 10
+        workspace_empty = np.sum(stuff_count) < empty_threshold
+        if workspace_empty or (self.is_sim and self.no_change_cnt > 10):
+            self.no_change_cnt = 0
+            if self.is_sim:
+                output_state = '%s, reset,' % ('empty' if workspace_empty else 'no change for a long time')
+                print(output_state)
+                self.robot.restart_sim()
+                self.robot.add_objects()
+                if self.is_testing:  # If at end of test run, re-load original weights (before test run)
+                    self.trainer.model.load_state_dict(torch.load(self.snapshot_file))
             else:
                 print('Not enough stuff on the table (value: %d)! Flipping over bin of objects...' % (np.sum(stuff_count)))
-                robot.restart_real()
+                self.robot.restart_real()
 
-            trainer.clearance_log.append([trainer.iteration])
-            logger.write_to_log('clearance', trainer.clearance_log)
-            if args.is_testing and len(trainer.clearance_log) >= args.max_test_trials:
-                exit_called = True  # Exit after training thread (back-prop and saving labels)
-            continue
+            self.trainer.clearance_log.append([self.trainer.iteration])
+            self.logger.write_to_log('clearance', self.trainer.clearance_log)
+            if self.is_testing and len(self.trainer.clearance_log) >= self.max_test_trials:
+                self.exit_called = True  # Exit after training thread (back-prop and saving labels)
+            return True
 
-        if not exit_called:
-            # Run F pass with network to get affordances
-            print('instruction: %s' % (robot.instruction))  # nb
-            grasp_predictions, state_feat = trainer.forward(
-                robot.instruction, color_heightmap, valid_depth_heightmap, is_volatile=True
-            )
-            # Execute best primitive action on robot in another thread
-            nonlocal_variables['executing_action'] = True
+        if self.is_sim and prev_grasp_success == State.SUCCESS:
+            print("grasp success, restart the simulation")
+            self.robot.restart_sim()
+            self.robot.add_objects()
 
-        # Run training iteration in current thread (aka training thread)
-        # if 'prev_color_img' in locals():
-        if prev_color_img is not None:
+        return False
 
-            # Detect changes
-            depth_diff = abs(depth_heightmap - prev_depth_heightmap)
-            depth_diff[np.isnan(depth_diff)] = 0
-            depth_diff[depth_diff > 0.3] = depth_diff[depth_diff < 0.01] = 0
-            depth_diff[depth_diff > 0] = 1
-            change_threshold = 300
-            change_value = np.sum(depth_diff)
-            change_detected = change_value > change_threshold or prev_grasp_success
-            print('Change detected: %r (value: %d)' % (change_detected, change_value))
+    def _detect_changes(self, depth_heightmap, prev_depth_heightmap, prev_grasp_success):
+        # Detect changes
+        depth_diff = abs(depth_heightmap - prev_depth_heightmap)
+        depth_diff[np.isnan(depth_diff)] = 0
+        depth_diff[depth_diff > 0.3] = depth_diff[depth_diff < 0.01] = 0
+        depth_diff[depth_diff > 0] = 1
+        change_threshold = 300
+        change_value = np.sum(depth_diff)
+        change_detected = change_value > change_threshold or prev_grasp_success == State.SUCCESS
+        print('Change detected: %r (value: %d)' % (change_detected, change_value))
 
-            if change_detected:
-                no_change_count[args.ACTION_ID[prev_primitive_action]] = 0
-            else:
-                no_change_count[args.ACTION_ID[prev_primitive_action]] += 1
+        if change_detected:
+            self.no_change_cnt = 0
+        else:
+            self.no_change_cnt += 1
 
-            # Compute training labels
-            label_value, prev_reward_value = trainer.get_label_value(
-                prev_primitive_action,
-                prev_grasp_success,
-                change_detected,
-                prev_grasp_predictions,
-                robot.instruction,
-                color_heightmap,
-                valid_depth_heightmap
-            )
-            trainer.label_value_log.append([label_value])
-            logger.write_to_log('label-value', trainer.label_value_log)
-            trainer.reward_value_log.append([prev_reward_value])
-            logger.write_to_log('reward-value', trainer.reward_value_log)
+        return change_detected
 
-            # Back-propagate
-            loss_value = trainer.backprop(robot.instruction, prev_color_heightmap, prev_valid_depth_heightmap,
-                                          prev_primitive_action, prev_best_pix_ind, label_value)
+    def _log_board_save(self, prev_grasp_success, label_value, reward_value, loss_value):
+        self.logger.write_to_log('label-value', self.trainer.label_value_log)
+        self.logger.write_to_log('reward-value', self.trainer.reward_value_log)
 
-            if args.method == 'reactive':
-                writer.add_scalar('reactive/grasp_success', prev_grasp_success, trainer.iteration)
-                writer.add_scalar('reactive/label', label_value, trainer.iteration)
-                writer.add_scalar('reactive/loss', loss_value, trainer.iteration)
-            elif args.method == 'reinforcement':
-                writer.add_scalar('RL/grasp_success', prev_grasp_success, trainer.iteration)
-                writer.add_scalar('RL/expected_reward', label_value, trainer.iteration)
-                writer.add_scalar('RL/current_reward', prev_reward_value, trainer.iteration)
-                writer.add_scalar('RL/loss', loss_value, trainer.iteration)
+        # record on tensorboard
+        if self.method == 'reactive':
+            self.writer.add_scalar('reactive/grasp_success', prev_grasp_success.value, self.trainer.iteration)
+            self.writer.add_scalar('reactive/label', label_value, self.trainer.iteration)
+            self.writer.add_scalar('reactive/loss', loss_value, self.trainer.iteration)
+        elif self.method == 'reinforcement':
+            self.writer.add_scalar('RL/grasp_success', prev_grasp_success.value, self.trainer.iteration)
+            self.writer.add_scalar('RL/expected_reward', label_value, self.trainer.iteration)
+            self.writer.add_scalar('RL/current_reward', reward_value, self.trainer.iteration)
+            self.writer.add_scalar('RL/loss', loss_value, self.trainer.iteration)
 
-            if args.is_sim and prev_grasp_success:
-                print("grasp the right object, restart the simulation")
-                robot.restart_sim()
-                robot.add_objects()
-                # return
-
-            # Adjust exploration probability
-            # if not args.is_testing:
-            # if args.explore_rate_decay:
-            #     explore_prob = max(0.5 * np.power(0.9998, trainer.iteration), 0.1)
-            # else:
-            #    explore_prob = 0.5
-
-            # Do sampling for experience replay
-            if args.experience_replay and not args.is_testing:
-                sample_primitive_action = prev_primitive_action
-                # if sample_primitive_action == 'grasp':
-                sample_primitive_action_id = 1
-                sample_reward_value = 0 if prev_reward_value == 1 else 1
-
-                # Get samples of the same primitive but with different results
-                sample_ind = np.argwhere(np.logical_and(
-                    np.asarray(trainer.reward_value_log)[1:trainer.iteration, 0] == sample_reward_value,
-                    np.asarray(trainer.executed_action_log)[1:trainer.iteration, 0] == sample_primitive_action_id
-                ))
-
-                if sample_ind.size > 0:
-
-                    # Find sample with highest surprise value
-                    if args.method == 'reactive':
-                        sample_surprise_values = np.abs(
-                            np.asarray(trainer.predicted_value_log)[sample_ind[:, 0]] - (1 - sample_reward_value))
-                    elif args.method == 'reinforcement':
-                        sample_surprise_values = np.abs(
-                            np.asarray(trainer.predicted_value_log)[sample_ind[:, 0]] -
-                            np.asarray(trainer.label_value_log)[sample_ind[:, 0]]
-                        )
-                    sorted_surprise_ind = np.argsort(sample_surprise_values[:, 0])
-                    sorted_sample_ind = sample_ind[sorted_surprise_ind, 0]
-                    pow_law_exp = 2
-                    rand_sample_ind = int(np.round(np.random.power(pow_law_exp, 1) * (sample_ind.size - 1)))
-                    sample_iteration = sorted_sample_ind[rand_sample_ind]
-                    print(
-                        'Experience replay: iteration %d (surprise value: %f)' %
-                        (sample_iteration, sample_surprise_values[sorted_surprise_ind[rand_sample_ind]])
-                    )
-
-                    # Load sample RGB-D heightmap
-                    sample_color_heightmap = cv2.imread(
-                        os.path.join(logger.color_heightmaps_directory, '%06d.0.color.png' % (sample_iteration)))
-                    sample_color_heightmap = cv2.cvtColor(sample_color_heightmap, cv2.COLOR_BGR2RGB)
-                    sample_depth_heightmap = cv2.imread(
-                        os.path.join(logger.depth_heightmaps_directory, '%06d.0.depth.png' % (sample_iteration)), -1)
-                    sample_depth_heightmap = sample_depth_heightmap.astype(np.float32) / 100000
-
-                    # Compute F pass with sample
-                    sample_grasp_predictions, sample_state_feat = trainer.forward(
-                        sample_color_heightmap, sample_depth_heightmap, is_volatile=True
-                    )
-
-                    # Get labels for sample and back-propagate
-                    sample_best_pix_ind = (np.asarray(trainer.executed_action_log)[sample_iteration, 1:4]).astype(int)
-                    trainer.backprop(
-                        sample_color_heightmap, sample_depth_heightmap, sample_primitive_action,
-                        sample_best_pix_ind, sample_reward_value
-                    )
-
-                    # Recompute prediction value, if sample_primitive_action == 'grasp':
-                    trainer.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
-
-                else:
-                    print('Not enough prior training samples. Skipping experience replay.')
-
-            # Save model snapshot
-            if not args.is_testing:
-                logger.save_backup_model(trainer.model, args.method)
-                if trainer.iteration % 50 == 0:
-                    logger.save_model(trainer.iteration, trainer.model, args.method)
-                    trainer.model = trainer.model.cuda()
-
-        # Sync both action thread and training thread
-        while nonlocal_variables['executing_action']:
-            time.sleep(0.01)
-
-        if exit_called:
-            break
-
-        # Save information for next training step
-        prev_color_img = color_img.copy()
-        # prev_depth_img = depth_img.copy()
-        prev_color_heightmap = color_heightmap.copy()
-        prev_depth_heightmap = depth_heightmap.copy()
-        prev_valid_depth_heightmap = valid_depth_heightmap.copy()
-        prev_grasp_success = nonlocal_variables['grasp_success']
-        prev_primitive_action = nonlocal_variables['primitive_action']
-        prev_grasp_predictions = grasp_predictions.copy()
-        prev_best_pix_ind = nonlocal_variables['best_pix_ind']
-
-        trainer.iteration += 1
-        iteration_time_1 = time.time()
-        print('Time elapsed: %f' % (iteration_time_1 - iteration_time_0))
+        # Save model snapshot
+        if not self.is_testing:
+            self.logger.save_backup_model(self.trainer.model, self.method)
+            if self.trainer.iteration % 50 == 0:
+                self.logger.save_model(self.trainer.iteration, self.trainer.model, self.method)
+                self.trainer.model = self.trainer.model.cuda()
 
 
 if __name__ == '__main__':
@@ -370,4 +310,6 @@ if __name__ == '__main__':
     # Run main program with specified config file
     parser.add_argument('-f', '--file', dest='file')
     args = parser.parse_args()
-    main(Config(args.file))
+
+    solver = Solver(Config(args.file))
+    solver.main()

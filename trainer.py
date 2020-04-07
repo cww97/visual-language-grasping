@@ -11,8 +11,8 @@ from envs.data import Data as TextData
 from envs.robot import State
 from models import reactive_net, reinforcement_net
 from utils import CrossEntropyLoss2d
-from envs.data import Data as TextData
-import pdb
+# from envs.data import Data as TextData
+# import pdb
 
 
 class Trainer(object):
@@ -53,7 +53,8 @@ class Trainer(object):
         self.model.train()
 
         # Initialize optimizer
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=2e-5)
+        # self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
         self.iteration = 0
 
         # Initialize lists to save execution info and RL variables
@@ -62,7 +63,6 @@ class Trainer(object):
         self.reward_value_log = []
         self.predicted_value_log = []
         self.use_heuristic_log = []
-        self.is_exploit_log = []
         self.clearance_log = []
 
     # Pre-load execution info and RL variables
@@ -87,10 +87,6 @@ class Trainer(object):
         self.use_heuristic_log = self.use_heuristic_log[0:self.iteration]
         self.use_heuristic_log.shape = (self.iteration, 1)
         self.use_heuristic_log = self.use_heuristic_log.tolist()
-        self.is_exploit_log = np.loadtxt(os.path.join(transitions_directory, 'is-exploit.log.txt'), delimiter=' ')
-        self.is_exploit_log = self.is_exploit_log[0:self.iteration]
-        self.is_exploit_log.shape = (self.iteration, 1)
-        self.is_exploit_log = self.is_exploit_log.tolist()
         self.clearance_log = np.loadtxt(os.path.join(transitions_directory, 'clearance.log.txt'), delimiter=' ')
         self.clearance_log.shape = (self.clearance_log.shape[0], 1)
         self.clearance_log = self.clearance_log.tolist()
@@ -140,54 +136,35 @@ class Trainer(object):
         input_color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
         input_depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
 
-        # Pass input data through model, cslnb
+        # Pass input data through model, cslnb, !!!!!!!!!!!!!!!!!!!!!!!!!!!
         output_prob, state_feat = self.model.forward(
             instruction_tensor, input_color_data, input_depth_data, is_volatile, specific_rotation
         )
 
-        if self.method == 'reactive':
-
-            # Return affordances (and remove extra padding)
-            for rotate_idx in range(len(output_prob)):
-                if rotate_idx == 0:
-                    grasp_predictions = F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[
-                        :, 0,
-                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
-                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
-                    ]
-                else:
-                    grasp_predictions = np.concatenate((
-                        grasp_predictions,
-                        F.softmax(output_prob[rotate_idx][0], dim=1).cpu().data.numpy()[
-                            :, 0,
-                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
-                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
-                        ]
-                    ), axis=0)
-
-        elif self.method == 'reinforcement':
-
-            # Return Q values (and remove extra padding)
-            for rotate_idx in range(len(output_prob)):
-                if rotate_idx == 0:
-                    grasp_predictions = output_prob[rotate_idx][0].cpu().data.numpy()[
-                        :, 0,
-                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
-                        (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
-                    ]
-                else:
-                    grasp_predictions = np.concatenate((
-                        grasp_predictions, output_prob[rotate_idx][0].cpu().data.numpy()[
-                            :, 0,
-                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2),
-                            (padding_width // 2): (color_heightmap_2x.shape[0] // 2 - padding_width // 2)
-                        ]
-                    ), axis=0)
-
+        full_width = color_heightmap_2x.shape[0]
+        grasp_predictions = self._get_pred(output_prob[0][0], padding_width, full_width)
+        for rotate_idx in range(1, len(output_prob)):
+            grasp_predictions = np.concatenate((
+                grasp_predictions,
+                self._get_pred(output_prob[rotate_idx][0], padding_width, full_width)
+            ), axis=0)
+        # import pdb; pdb.set_trace()
         return grasp_predictions, state_feat
 
+    def _get_pred(self, prob, padding_width, full_width):
+        if self.method == 'reactive':
+            prob = F.softmax(prob, dim=1)  # Return affordances
+        # else (reinforcement): Return Q values
+        prob = prob.cpu().data.numpy()
+        pred = prob[
+            :, 0,
+            (padding_width // 2): (full_width // 2 - padding_width // 2),
+            (padding_width // 2): (full_width // 2 - padding_width // 2)
+        ]
+        return pred
+
     def get_label_value(
-        self, primitive_action,
+        self,
         grasp_success,
         change_detected,
         prev_grasp_predictions,
@@ -197,9 +174,9 @@ class Trainer(object):
     ):
         if self.method == 'reactive':
             # label: 0 - grasp, 1 - failed grasp, 2 - no loss
-            label_value = 0 if grasp_success == State.SUCCESS == State else 1
-            print('Label value: %d' % (label_value))
-            return label_value, label_value
+            label_value = 0 if grasp_success == State.SUCCESS else 1  # TODO, wrong obj
+            print('grasp_success = %s, Label value: %d' % (str(grasp_success), label_value))
+            label_value, reward_value = label_value, label_value
 
         elif self.method == 'reinforcement':
             # Compute current reward, deal with put in the future
@@ -218,10 +195,14 @@ class Trainer(object):
             print('Expected reward: %f + %f x %f = %f' % (
                 current_reward, self.future_reward_discount, future_reward, expected_reward
             ))
-            return expected_reward, current_reward
+            label_value, reward_value = expected_reward, current_reward
+
+        self.label_value_log.append([label_value])
+        self.reward_value_log.append([reward_value])
+        return label_value, reward_value
 
     # Compute labels and back-propagate
-    def backprop(self, instruction, color_heightmap, depth_heightmap, primitive_action, best_pix_ind, label_value):
+    def backprop(self, instruction, color_heightmap, depth_heightmap, best_pix_ind, label_value):
         fill_value = 2 if self.method == 'reactive' else 0  # Compute fill value, 2:no loss
         # Compute labels
         label = np.zeros((1, 320, 320)) + fill_value
@@ -235,13 +216,15 @@ class Trainer(object):
         # Compute loss and backward pass
         self.optimizer.zero_grad()
         loss_value = 0
-        if primitive_action == 'grasp':
-            # Do for-ward pass with specified rotation (to save gradients)
-            loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap, best_pix_ind[0], label, label_weights)
-            # Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
-            opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
-            loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap, opposite_rotate_idx, label, label_weights)
-            loss_value = loss_value / 2
+        # if primitive_action == 'grasp':
+        # Do for-ward pass with specified rotation (to save gradients)
+        loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap, best_pix_ind[0],
+                                          label, label_weights)
+        # Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
+        opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
+        loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap,
+                                          opposite_rotate_idx, label, label_weights)
+        loss_value = loss_value / 2
 
         print('Training loss: %f' % (loss_value))
         self.optimizer.step()
@@ -250,13 +233,67 @@ class Trainer(object):
     def _backward_loss(self, instruction, color_heightmap, depth_heightmap, rotate_idx, label, label_weights=None):
         _, _ = self.forward(instruction, color_heightmap, depth_heightmap, False, rotate_idx)
         if self.method == 'reactive':
-            loss = self.grasp_criterion(self.model.output_prob[0][0], Variable(torch.from_numpy(label).long().cuda()))
+            loss = self.grasp_criterion(
+                self.model.output_prob[0][0],
+                Variable(torch.from_numpy(label).long().cuda())
+            )
         else:
             loss = self.criterion(
-                self.model.output_prob[0][0].view(1, 320, 320), Variable(torch.from_numpy(label).float().cuda())
+                self.model.output_prob[0][0].view(1, 320, 320),
+                Variable(torch.from_numpy(label).float().cuda())
             ) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
         loss.backward()
+        # import pdb; pdb.set_trace()
         return loss.cpu().data.numpy()
+
+    def experience_replay(self, reward_value, logger):
+        # Do sampling for experience replay
+        sample_reward_value = 0 if reward_value == 1 else 1  # jingsui
+        # Get samples of the same primitive but with different results
+        sample_idxs = np.argwhere(
+            np.asarray(self.reward_value_log)[1:self.iteration, 0] == sample_reward_value
+        )
+
+        if sample_idxs.size > 0:
+            # Find sample with highest surprise value
+            if self.method == 'reactive':
+                sample_surprise_values = np.abs(
+                    np.asarray(self.predicted_value_log)[sample_idxs[:, 0]] - (1 - sample_reward_value)
+                )
+            elif self.method == 'reinforcement':
+                sample_surprise_values = np.abs(
+                    np.asarray(self.predicted_value_log)[sample_idxs[:, 0]] -
+                    np.asarray(self.label_value_log)[sample_idxs[:, 0]]
+                )
+            sorted_surprise_idx = np.argsort(sample_surprise_values[:, 0])
+            sorted_sample_idxs = sample_idxs[sorted_surprise_idx, 0]
+            pow_law_exp = 2
+            rand_sample_idxs = int(np.round(np.random.power(pow_law_exp, 1) * (sample_idxs.size - 1)))
+            sample_iteration = sorted_sample_idxs[rand_sample_idxs]
+            print(
+                'Experience replay: iteration %d (surprise value: %f)' %
+                (sample_iteration, sample_surprise_values[sorted_surprise_idx[rand_sample_idxs]])
+            )
+
+            # Load sample instructiont and RGB-D heightmap
+            # logger.get_date(sample_iteration)
+            sample_instruction = logger.load_instruction(sample_iteration, '0')
+            sample_color_heightmap, sample_depth_heightmap = logger.load_heightmaps(sample_iteration, '0')
+
+            # Compute For-ward pass with sample
+            sample_grasp_predictions, sample_state_feat = self.forward(
+                sample_instruction, sample_color_heightmap, sample_depth_heightmap, is_volatile=True
+            )
+
+            # Get labels for sample and back-propagate
+            sample_pix_idx = (np.asarray(self.executed_action_log)[sample_iteration, 1:4]).astype(int)
+            self.backprop(
+                sample_instruction, sample_color_heightmap, sample_depth_heightmap,
+                sample_pix_idx, sample_reward_value
+            )
+
+            # Recompute prediction value, if sample_action == 'grasp':
+            self.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
 
     def get_prediction_vis(self, predictions, color_heightmap, best_pix_ind):
 

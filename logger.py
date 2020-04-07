@@ -3,8 +3,8 @@ import datetime
 import os
 import numpy as np
 import cv2
-import torch 
-# import h5py 
+import torch
+# import h5py
 
 
 class Logger():
@@ -12,19 +12,17 @@ class Logger():
     def __init__(self, continue_logging, logging_directory):
 
         # Create directory to save data
-        timestamp = time.time()
-        timestamp_value = datetime.datetime.fromtimestamp(timestamp)
         self.continue_logging = continue_logging
         if self.continue_logging:
             self.base_directory = logging_directory
             print('Pre-loading data logging session: %s' % (self.base_directory))
         else:
-            if os.name == 'nt':
-                self.base_directory = os.path.join(logging_directory, timestamp_value.strftime('%Y.%m.%d_%H.%M.%S.log'))
-            else:
-                self.base_directory = os.path.join(logging_directory, timestamp_value.strftime('%Y-%m-%d.%H:%M:%S'))
+            timestamp = time.time()
+            timestamp_value = datetime.datetime.fromtimestamp(timestamp)
+            self.base_directory = os.path.join(logging_directory, timestamp_value.strftime('%Y-%m-%d.%H:%M:%S'))
             print('Creating data logging session: %s' % (self.base_directory))
         self.info_directory = os.path.join(self.base_directory, 'info')
+        self.instruction_directory = os.path.join(self.base_directory, 'data', 'instructions')
         self.color_images_directory = os.path.join(self.base_directory, 'data', 'color-images')
         self.depth_images_directory = os.path.join(self.base_directory, 'data', 'depth-images')
         self.color_heightmaps_directory = os.path.join(self.base_directory, 'data', 'color-heightmaps')
@@ -36,6 +34,8 @@ class Logger():
 
         if not os.path.exists(self.info_directory):
             os.makedirs(self.info_directory)
+        if not os.path.exists(self.instruction_directory):
+            os.makedirs(self.instruction_directory)
         if not os.path.exists(self.color_images_directory):
             os.makedirs(self.color_images_directory)
         if not os.path.exists(self.depth_images_directory):
@@ -62,18 +62,33 @@ class Logger():
         np.savetxt(os.path.join(self.info_directory, 'heightmap-boundaries.txt'), boundaries, delimiter=' ')
         np.savetxt(os.path.join(self.info_directory, 'heightmap-resolution.txt'), [resolution], delimiter=' ')
 
+    def save_instruction(self, iteration, instruction, mode):
+        with open(os.path.join(self.instruction_directory, '%06d.%s.instruction.txt' % (iteration, mode)), 'w') as f:
+            f.write(instruction)
+
+    def load_instruction(self, iteration, mode):
+        with open(os.path.join(self.instruction_directory, '%06d.%s.instruction.txt' % (iteration, mode)), 'r') as f:
+            return f.read()
+
     def save_images(self, iteration, color_image, depth_image, mode):
         color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
         cv2.imwrite(os.path.join(self.color_images_directory, '%06d.%s.color.png' % (iteration, mode)), color_image)
         depth_image = np.round(depth_image * 10000).astype(np.uint16)  # Save depth in 1e-4 meters
         cv2.imwrite(os.path.join(self.depth_images_directory, '%06d.%s.depth.png' % (iteration, mode)), depth_image)
-    
+
     def save_heightmaps(self, iteration, color_heightmap, depth_heightmap, mode):
         color_heightmap = cv2.cvtColor(color_heightmap, cv2.COLOR_RGB2BGR)
         cv2.imwrite(os.path.join(self.color_heightmaps_directory, '%06d.%s.color.png' % (iteration, mode)), color_heightmap)
         depth_heightmap = np.round(depth_heightmap * 100000).astype(np.uint16)  # Save depth in 1e-5 meters
         cv2.imwrite(os.path.join(self.depth_heightmaps_directory, '%06d.%s.depth.png' % (iteration, mode)), depth_heightmap)
-    
+
+    def load_heightmaps(self, iteration, mode):
+        color_heightmap = cv2.imread(os.path.join(self.color_heightmaps_directory, '%06d.0.color.png' % (iteration)))
+        color_heightmap = cv2.cvtColor(color_heightmap, cv2.COLOR_BGR2RGB)
+        depth_heightmap = cv2.imread(os.path.join(self.depth_heightmaps_directory, '%06d.0.depth.png' % (iteration)), -1)
+        depth_heightmap = depth_heightmap.astype(np.float32) / 100000
+        return color_heightmap, depth_heightmap
+
     def write_to_log(self, log_name, log):
         np.savetxt(os.path.join(self.transitions_directory, '%s.log.txt' % log_name), log, delimiter=' ')
 
