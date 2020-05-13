@@ -8,48 +8,69 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from torch.autograd import Variable
-# from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
-class CNN_Text(nn.Module):
-    '''https://github.com/Shawn1993/cnn-text-classification-pytorch
-    '''
+class EncoderLSTM(nn.Module):
+    ''' https://github.com/peteanderson80/Matterport3DSimulator
+        Encodes navigation instructions, returning hidden state context (for
+        attention methods) and a decoder initial state. '''
 
-    def __init__(self, embed_num, embed_dim, drop_out):
-        super().__init__()
-        # print(embed_num, embed_dim, drop_out)
-        self.embed_num = embed_num
-        self.embed_dim = embed_dim
-        self.embed = nn.Embedding(self.embed_num, self.embed_dim)
+    def __init__(self, vocab_size, padding_idx,
+                 embedding_size=256, hidden_size=512,
+                 dropout_ratio=0.5, bidirectional=False, num_layers=1):
+        super(EncoderLSTM, self).__init__()
+        self.embedding_size = embedding_size
+        self.hidden_size = hidden_size
+        self.drop = nn.Dropout(p=dropout_ratio)
+        self.num_directions = 2 if bidirectional else 1
+        self.num_layers = num_layers
+        self.embedding = nn.Embedding(vocab_size, embedding_size, padding_idx)
+        self.lstm = nn.LSTM(embedding_size, hidden_size, self.num_layers,
+                            batch_first=True, dropout=dropout_ratio,
+                            bidirectional=bidirectional)
+        self.encoder2decoder = nn.Linear(
+            hidden_size * self.num_directions,
+            hidden_size * self.num_directions
+        )
 
-        Ci = 1  # total 1024 = 32 * 32
-        self.conv1_1 = nn.Conv2d(Ci, 81920, (1, self.embed_dim))
-        self.conv1_2 = nn.Conv2d(Ci, 81920, (2, self.embed_dim))
-        self.conv1_3 = nn.Conv2d(Ci, 81920, (3, self.embed_dim))
-        self.conv1_4 = nn.Conv2d(Ci, 81920, (4, self.embed_dim))
-        self.conv1_5 = nn.Conv2d(Ci, 81920, (5, self.embed_dim))
-        self.dropout = nn.Dropout(drop_out)
+    def init_state(self, inputs):
+        ''' Initialize to zero cell states and hidden states.'''
+        batch_size = inputs.size(0)
+        h0 = Variable(torch.zeros(
+            self.num_layers * self.num_directions,
+            batch_size,
+            self.hidden_size
+        ), requires_grad=False)
+        c0 = Variable(torch.zeros(
+            self.num_layers * self.num_directions,
+            batch_size,
+            self.hidden_size
+        ), requires_grad=False)
+        return h0.cuda(), c0.cuda()
 
-    def conv_and_pool(self, x, conv):
-        x = F.relu(conv(x)).squeeze(3)  # (N, Co, W)
-        x = F.max_pool1d(x, x.size(2)).squeeze(2)
-        return x
+    def forward(self, inputs, lengths):
+        ''' Expects input vocab indices as (batch, seq_len). Also requires a
+            list of lengths for dynamic batching. '''
+        embeds = self.embedding(inputs)   # (batch, seq_len, embedding_size)
+        embeds = self.drop(embeds)
+        h0, c0 = self.init_state(inputs)
+        packed_embeds = pack_padded_sequence(embeds, lengths, batch_first=True)
+        enc_h, (enc_h_t, enc_c_t) = self.lstm(packed_embeds, (h0, c0))
 
-    def forward(self, x):
-        x = self.embed(x)              # (N, W, D)
-        x = Variable(x).unsqueeze(1)   # (N, Ci, W, D)
+        if self.num_directions == 2:
+            h_t = torch.cat((enc_h_t[-1], enc_h_t[-2]), 1)
+            c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
+        else:
+            h_t = enc_h_t[-1]
+            c_t = enc_c_t[-1]  # (batch, hidden_size)
 
-        x1 = self.conv_and_pool(x, self.conv1_1)
-        x2 = self.conv_and_pool(x, self.conv1_2)
-        x3 = self.conv_and_pool(x, self.conv1_3)
-        x4 = self.conv_and_pool(x, self.conv1_4)
-        x5 = self.conv_and_pool(x, self.conv1_5)
-        x = torch.cat((x1, x2, x3, x4, x5), 1)  # (N,1024)
+        decoder_init = nn.Tanh()(self.encoder2decoder(h_t))
 
-        x = self.dropout(x)  # (N, len(Ks)*Co)
-        x = x.reshape(len(x), 1024, 20, 20)
-        # print('end ', x.shape, type(x)); assert False
-        return x
+        ctx, lengths = pad_packed_sequence(enc_h, batch_first=True)
+        ctx = self.drop(ctx)
+        return ctx, decoder_init, c_t  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class BaseNet(nn.Module):
@@ -94,7 +115,6 @@ class BaseNet(nn.Module):
         is_volatile: true for each rotation, false for specific_rotation
         use is_volatile=false in backward
         """
-
         # cnn-text, rua
         text_feature = self.text_encoder(instruction).detach()
         # print(text_feature.shape)
@@ -102,8 +122,7 @@ class BaseNet(nn.Module):
         if is_volatile:  # try every rotate angle
             rotations = range(self.num_rotations)
             torch.set_grad_enabled(False)
-            output_prob = []
-            interm_feat = []
+            output_prob, interm_feat = [], []
         else:
             rotations = [specific_rotation]
             output_prob = self.output_prob = []
@@ -112,50 +131,17 @@ class BaseNet(nn.Module):
         # Apply rotations to images
         for rotate_idx in rotations:
             rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
-
-            # Compute sample grid for rotation BEFORE neural network
-            affine_mat_before = np.asarray([
-                [np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
-                [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]
-            ])
-            affine_mat_before.shape = (2, 3, 1)
-            affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
-            flow_grid_before = F.affine_grid(
-                Variable(affine_mat_before, requires_grad=False).cuda(),
-                input_color_data.size()
-            )
-
-            # Rotate images clockwise
-            rotate_color = F.grid_sample(
-                Variable(input_color_data, requires_grad=False).cuda(),
-                flow_grid_before, mode='nearest'
-            )
-            rotate_depth = F.grid_sample(
-                Variable(input_depth_data, requires_grad=False).cuda(),
-                flow_grid_before, mode='nearest'
-            )
+            rotate_color, rotate_depth = self._rotate(rotate_theta, input_color_data, input_depth_data)
 
             # Compute intermediate features, use pretrained densenet
             interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
             interm_grasp_depth_feat = self.grasp_depth_trunk.features(rotate_depth)
-            # assert False
-            interm_grasp_feat = torch.cat(
-                (text_feature, interm_grasp_color_feat, interm_grasp_depth_feat), dim=1
-            )
+            interm_grasp_feat = torch.cat((text_feature, interm_grasp_color_feat, interm_grasp_depth_feat), dim=1)
             interm_feat.append([interm_grasp_feat])
 
-            # Compute sample grid for rotation AFTER branches
-            affine_mat_after = np.asarray([
-                [np.cos(rotate_theta), np.sin(rotate_theta), 0],
-                [-np.sin(rotate_theta), np.cos(rotate_theta), 0]
-            ])
-            affine_mat_after.shape = (2, 3, 1)
-            affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
-
-            flow_grid_after = F.affine_grid(
-                Variable(affine_mat_after, requires_grad=False).cuda(),
-                interm_grasp_feat.data.size()
-            )
+            affine_mat_after = self._get_affine_mat_after(rotate_theta)
+            flow_grid_after = F.affine_grid(Variable(affine_mat_after, requires_grad=False).cuda(),
+                                            interm_grasp_feat.data.size())
 
             # Forward pass through branches, undo rotation on output predictions, upsample results
             output_prob.append([
@@ -166,11 +152,43 @@ class BaseNet(nn.Module):
                     flow_grid_after, mode='nearest'
                 ))
             ])
-            # print(output_prob[-1][0].shape)
-            # assert False
 
         if is_volatile: torch.set_grad_enabled(True)
         return output_prob, interm_feat
+
+    def _rotate(self, rotate_theta, input_color_data, input_depth_data):
+        # Compute sample grid for rotation BEFORE neural network
+        affine_mat_before = np.asarray([
+            [np.cos(-rotate_theta), np.sin(-rotate_theta), 0],
+            [-np.sin(-rotate_theta), np.cos(-rotate_theta), 0]
+        ])
+        affine_mat_before.shape = (2, 3, 1)
+        affine_mat_before = torch.from_numpy(affine_mat_before).permute(2, 0, 1).float()
+        flow_grid_before = F.affine_grid(
+            Variable(affine_mat_before, requires_grad=False).cuda(),
+            input_color_data.size()
+        )
+
+        # Rotate images clockwise
+        rotate_color = F.grid_sample(
+            Variable(input_color_data, requires_grad=False).cuda(),
+            flow_grid_before, mode='nearest'
+        )
+        rotate_depth = F.grid_sample(
+            Variable(input_depth_data, requires_grad=False).cuda(),
+            flow_grid_before, mode='nearest'
+        )
+        return rotate_color, rotate_depth
+
+    def _get_affine_mat_after(self, rotate_theta):
+        # Compute sample grid for rotation AFTER branches
+        affine_mat_after = np.asarray([
+            [np.cos(rotate_theta), np.sin(rotate_theta), 0],
+            [-np.sin(rotate_theta), np.cos(rotate_theta), 0]
+        ])
+        affine_mat_after.shape = (2, 3, 1)
+        affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
+        return affine_mat_after
 
 
 class reactive_net(BaseNet):
@@ -181,6 +199,47 @@ class reactive_net(BaseNet):
 class reinforcement_net(BaseNet):
     def __init__(self, **kwargs):
         super().__init__(grasp_conv1_out_channels=1, **kwargs)
+
+
+class CNN_Text(nn.Module):
+    '''https://github.com/Shawn1993/cnn-text-classification-pytorch
+    '''
+
+    def __init__(self, vocab_size, embed_dim=256, drop_out=0.5):
+        super().__init__()
+        # print(embed_num, embed_dim, drop_out)
+        self.embed_num = vocab_size
+        self.embed_dim = embed_dim
+        self.embed = nn.Embedding(self.embed_num, self.embed_dim)
+
+        Ci = 1  # total 1024 = 32 * 32
+        self.conv1_1 = nn.Conv2d(Ci, 81920, (1, self.embed_dim))
+        self.conv1_2 = nn.Conv2d(Ci, 81920, (2, self.embed_dim))
+        self.conv1_3 = nn.Conv2d(Ci, 81920, (3, self.embed_dim))
+        self.conv1_4 = nn.Conv2d(Ci, 81920, (4, self.embed_dim))
+        self.conv1_5 = nn.Conv2d(Ci, 81920, (5, self.embed_dim))
+        self.dropout = nn.Dropout(drop_out)
+
+    def conv_and_pool(self, x, conv):
+        x = F.relu(conv(x)).squeeze(3)  # (N, Co, W)
+        x = F.max_pool1d(x, x.size(2)).squeeze(2)
+        return x
+
+    def forward(self, x):
+        x = self.embed(x)              # (N, W, D)
+        x = Variable(x).unsqueeze(1)   # (N, Ci, W, D)
+
+        x1 = self.conv_and_pool(x, self.conv1_1)
+        x2 = self.conv_and_pool(x, self.conv1_2)
+        x3 = self.conv_and_pool(x, self.conv1_3)
+        x4 = self.conv_and_pool(x, self.conv1_4)
+        x5 = self.conv_and_pool(x, self.conv1_5)
+        x = torch.cat((x1, x2, x3, x4, x5), 1)  # (N,1024)
+
+        x = self.dropout(x)  # (N, len(Ks)*Co)
+        x = x.reshape(len(x), 1024, 20, 20)
+        # print('end ', x.shape, type(x)); assert False
+        return x
 
 
 if __name__ == '__main__':
