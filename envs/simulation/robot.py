@@ -107,7 +107,8 @@ class SimRobot(BaseRobot):
         # print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
         # self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
 
-        self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
+        # self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
+        self.obj_mesh_color = self.color_space[np.random.choice(np.arange(self.color_space.shape[0]), size=self.num_obj, replace=False)]
         # Add each object to robot workspace at x,y location and orientation (random or pre-loaded)
         self.object_handles = []
         for object_idx in range(len(self.obj_mesh_ind)):

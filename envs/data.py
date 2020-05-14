@@ -42,6 +42,7 @@ class Data(object):
         self.text_field = data.Field(lower=True)
         self.dataset = Data.DataSet(self.text_field, filename)
         self.text_field.build_vocab(self.dataset)
+        self.padding_idx = self.text_field.vocab.stoi[self.text_field.pad_token]
 
     def get_tensor(self, x: str):
         x = self.text_field.preprocess(x)

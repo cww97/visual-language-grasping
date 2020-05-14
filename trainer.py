@@ -22,11 +22,11 @@ class Trainer(object):
         assert torch.cuda.is_available()
         self.method = method
         self.text_data = TextData()
-        vocab = len(self.text_data.text_field.vocab)
+        vocab, pad_idx = len(self.text_data.text_field.vocab), self.text_data.padding_idx
 
         # Fully convolutional classification network for supervised learning
         if self.method == 'reactive':
-            self.model = reactive_net(vocab_size=vocab)
+            self.model = reactive_net(vocab_size=vocab, padding_idx=pad_idx)
 
             # Initialize classification loss
             grasp_num_classes = 3  # 0 - grasp, 1 - failed grasp, 2 - no loss
@@ -36,7 +36,7 @@ class Trainer(object):
 
         # Fully convolutional Q network for deep reinforcement learning
         elif self.method == 'reinforcement':
-            self.model = reinforcement_net(vocab_size=vocab)
+            self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx)
             self.future_reward_discount = future_reward_discount
             # Initialize Huber loss
             self.criterion = torch.nn.SmoothL1Loss(reduce=False).cuda()  # Huber losss
