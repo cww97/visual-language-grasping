@@ -4,7 +4,7 @@ is_sim: true # false
 ## directory containing 3D mesh files (.obj) of objects to be added to simulation
 obj_mesh_dir: 'envs/objects/blocks'
 ## number of objects to add to simulation
-num_obj: 1
+num_obj: 5
 ## IP address to robot arm as TCP client (UR5)
 tcp_host_ip: '100.127.7.223'
 ## port to robot arm as TCP client (UR5)
@@ -27,7 +27,7 @@ future_reward_discount: 0.5
 ## use prioritized experience replay?
 experience_replay: true
 ## use handcrafted grasping algorithm when grasping fails too many times in a row during training?
-heuristic_bootstrap: true
+heuristic_bootstrap: false
 explore_rate_decay: false
 grasp_only: false
 

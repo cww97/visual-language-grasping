@@ -27,7 +27,7 @@ class EncoderLSTM(nn.Module):
 		self.num_layers = num_layers
 		self.embedding = nn.Embedding(vocab_size, embedding_size, padding_idx)
 		self.lstm = nn.LSTM(embedding_size, hidden_size, self.num_layers,
-							batch_first=True, dropout=dropout_ratio,
+							batch_first=True,  # dropout=dropout_ratio,
 							bidirectional=bidirectional)
 		self.encoder2decoder = nn.Linear(
 			hidden_size * self.num_directions,
@@ -53,7 +53,7 @@ class EncoderLSTM(nn.Module):
 		''' Expects input vocab indices as (batch, seq_len). Also requires a
 			list of lengths for dynamic batching. '''
 		embeds = self.embedding(inputs)   # (batch, seq_len, embedding_size)
-		embeds = self.drop(embeds)
+		# embeds = self.drop(embeds)
 		h0, c0 = self.init_state(inputs)
 		# import pdb; pdb.set_trace()
 		packed_embeds = pack_padded_sequence(embeds, lengths, batch_first=True)
@@ -69,7 +69,7 @@ class EncoderLSTM(nn.Module):
 		decoder_init = nn.Tanh()(self.encoder2decoder(h_t))
 
 		ctx, lengths = pad_packed_sequence(enc_h, batch_first=True)
-		ctx = self.drop(ctx)
+		# ctx = self.drop(ctx)
 		return ctx, decoder_init, c_t  # (batch, seq_len, hidden_size*num_directions)
 		# (batch, hidden_size)
 

@@ -30,3 +30,5 @@ visualization.grasp.png
 venv/
 
 runs/
+reinforcement.yaml
+reactive.yaml
