@@ -65,9 +65,9 @@ class Solver():
 
 		# between threads(action and training)
 		self.executing_action = False  # lock
-		self.grasp_predictions = None
-		self.best_pix_idx = None
-		self.color_heightmap = None
+		self.grasp_pred = None
+		self.best_pix = None
+		self.color_map = None
 		self.valid_depth_heightmap = None
 		self.grasp_success = None
 
@@ -88,26 +88,26 @@ class Solver():
 			time.sleep(0.01)
 
 	def _get_best_pix(self):
-		best_grasp_conf = np.max(self.grasp_predictions)
+		best_grasp_conf = np.max(self.grasp_pred)
 		print('Primitive confidence scores: %f (grasp)' % (best_grasp_conf))
 
 		# If heuristic bootstrapping is enabled: if change has not been detected more than 2 times,
 		# execute heuristic algorithm to detect grasps
 		# NOTE: typically not necessary and can reduce final performance.
 		if self.heuristic_bootstrap and self.no_change_cnt >= 5:
-			print('Change not detected for more than 2 grasps. Running **heuristic grasping**.')
-			self.best_pix_idx = self.trainer.grasp_heuristic(self.valid_depth_heightmap)
+			print('Change not detected for more than 2 grasps. Run **heuristic grasping**.')
+			self.best_pix = self.trainer.grasp_heuristic(self.valid_depth_heightmap)
 			# self.no_change_cnt = 0
 			# import pdb; pdb.set_trace()
-			predicted_value = self.grasp_predictions[self.best_pix_idx]
+			predicted_value = self.grasp_pred[self.best_pix]
 			use_heuristic = True
 		else:
 			use_heuristic = False
 
 			# Get pixel location and rotation with highest affordance
 			# prediction from heuristic algorithms (rotation, y, x)
-			self.best_pix_idx = np.unravel_index(np.argmax(self.grasp_predictions), self.grasp_predictions.shape)
-			predicted_value = np.max(self.grasp_predictions)
+			self.best_pix = np.unravel_index(np.argmax(self.grasp_pred), self.grasp_pred.shape)
+			predicted_value = np.max(self.grasp_pred)
 
 		self.trainer.use_heuristic_log.append([1 if use_heuristic else 0])
 		self.logger.write_to_log('use-heuristic', self.trainer.use_heuristic_log)
@@ -118,18 +118,21 @@ class Solver():
 
 		# Visualize executed primitive, and affordances
 		if self.save_visualizations:
-			grasp_pred_vis = self.trainer.get_prediction_vis(
-				self.grasp_predictions, self.color_heightmap, self.best_pix_idx
+			grasp_pred_vis = self.trainer.get_pred_vis(
+				self.grasp_pred, self.color_map, self.best_pix
 			)
 			self.logger.save_visualizations(self.trainer.iteration, grasp_pred_vis, 'grasp')
+
+			atten_vis = self.trainer.get_atten_vis(self.attens, self.color_map, self.best_pix)
+			self.logger.save_visualizations(self.trainer.iteration, atten_vis, 'atten')
 			# cv2.imwrite('visualization.grasp.png', grasp_pred_vis)
 
 	def _get_action_data(self):
 		# Compute 3D position of pixel
 		# print('Action: %s at (%d, %d, %d)' % (
-		best_rotation_angle = np.deg2rad(self.best_pix_idx[0] * (360.0 / self.trainer.model.num_rotations))
-		best_pix_x = self.best_pix_idx[2]
-		best_pix_y = self.best_pix_idx[1]
+		best_rotation_angle = np.deg2rad(self.best_pix[0] * (360.0 / self.trainer.model.num_rotations))
+		best_pix_x = self.best_pix[2]
+		best_pix_y = self.best_pix[1]
 		primitive_position = [
 			best_pix_x * self.heightmap_resolution +
 			self.workspace_limits[0][0], best_pix_y * self.heightmap_resolution + self.workspace_limits[1][0],
@@ -137,9 +140,9 @@ class Solver():
 		]
 
 		self.trainer.executed_action_log.append([
-			1, self.best_pix_idx[0],
-			self.best_pix_idx[1],
-			self.best_pix_idx[2]
+			1, self.best_pix[0],
+			self.best_pix[1],
+			self.best_pix[2]
 		])  # 1 - grasp
 		self.logger.write_to_log('executed-action', self.trainer.executed_action_log)
 		return best_rotation_angle, primitive_position
@@ -154,7 +157,7 @@ class Solver():
 		prev_depth_heightmap = None
 		prev_valid_depth_heightmap = None
 		prev_grasp_success = None
-		prev_grasp_predictions = None
+		prev_grasp_pred = None
 		prev_best_pix_idx = None
 
 		# Start main training/testing loop
@@ -169,8 +172,8 @@ class Solver():
 
 			if not self.exit_called:  # Run For-ward pass with network to get affordances
 				print('instruction: %s' % (self.robot.instruction))  # nb
-				self.grasp_predictions, _ = self.trainer.forward(
-					self.robot.instruction, self.color_heightmap, self.valid_depth_heightmap, is_volatile=True
+				self.grasp_pred, _, self.attens = self.trainer.forward(
+					self.robot.instruction, self.color_map, self.valid_depth_heightmap, is_volatile=True
 				)
 				self.executing_action = True  # Robot: Execute action in another thread
 
@@ -180,8 +183,8 @@ class Solver():
 
 				# Compute training labels
 				label_value, reward_value = self.trainer.get_label_value(
-					prev_grasp_success, change_detected, prev_grasp_predictions,
-					self.robot.instruction, self.color_heightmap, self.valid_depth_heightmap
+					prev_grasp_success, change_detected, prev_grasp_pred,
+					self.robot.instruction, self.color_map, self.valid_depth_heightmap
 				)
 
 				# Back-propagate
@@ -198,12 +201,12 @@ class Solver():
 			if self.exit_called: break
 
 			# Save information for next training step
-			prev_color_heightmap = self.color_heightmap.copy()
+			prev_color_heightmap = self.color_map.copy()
 			prev_depth_heightmap = depth_heightmap.copy()
 			prev_valid_depth_heightmap = self.valid_depth_heightmap.copy()
 			prev_grasp_success = self.grasp_success
-			prev_grasp_predictions = self.grasp_predictions.copy()
-			prev_best_pix_idx = self.best_pix_idx
+			prev_grasp_pred = self.grasp_pred.copy()
+			prev_best_pix_idx = self.best_pix
 
 			self.trainer.iteration += 1
 			iteration_time_1 = time.time()
@@ -215,7 +218,7 @@ class Solver():
 		depth_img = depth_img * self.robot.cam_depth_scale  # Apply depth scale from calibration
 
 		# Get heightmap from RGB-D image (by re-projecting 3D point cloud)
-		self.color_heightmap, depth_heightmap = utils.get_heightmap(
+		self.color_map, depth_heightmap = utils.get_heightmap(
 			color_img, depth_img, self.robot.cam_intrinsics,
 			self.robot.cam_pose, self.workspace_limits, self.heightmap_resolution
 		)
@@ -225,7 +228,7 @@ class Solver():
 		# Save RGB-D images and RGB-D heightmaps
 		self.logger.save_instruction(self.trainer.iteration, self.robot.instruction, '0')
 		self.logger.save_images(self.trainer.iteration, color_img, depth_img, '0')
-		self.logger.save_heightmaps(self.trainer.iteration, self.color_heightmap, self.valid_depth_heightmap, '0')
+		self.logger.save_heightmaps(self.trainer.iteration, self.color_map, self.valid_depth_heightmap, '0')
 
 		return depth_heightmap
 

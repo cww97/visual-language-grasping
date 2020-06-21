@@ -138,30 +138,42 @@ class Trainer(object):
 			input_depth_image[:, :, c] = (input_depth_image[:, :, c] - image_mean[c]) / image_std[c]
 
 		# Construct minibatch of size 1 (b,c,h,w)
-		input_color_image.shape = (input_color_image.shape[0], input_color_image.shape[1], input_color_image.shape[2], 1)
-		input_depth_image.shape = (input_depth_image.shape[0], input_depth_image.shape[1], input_depth_image.shape[2], 1)
+		_shape = input_color_image.shape
+		assert input_color_image.shape == input_depth_image.shape
+		input_color_image.shape = (_shape[0], _shape[1], _shape[2], 1)
+		input_depth_image.shape = (_shape[0], _shape[1], _shape[2], 1)
 		input_color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
 		input_depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
 
 		# Pass input data through model, cslnb, !!!!!!!!!!!!!!!!!!!!!!!!!!!
-		output_prob, state_feat = self.model.forward(
+		output_prob, state_feat, atten_factor = self.model.forward(
 			instruction_tensor, input_color_data, input_depth_data, is_volatile, specific_rotation
 		)
 
+		# import pdb; pdb.set_trace()
 		full_width = color_heightmap_2x.shape[0]
+		attens = self._remove_padding(atten_factor[0][0], padding_width, full_width)
+		for rotate_idx in range(1, len(atten_factor)):
+			attens = np.concatenate((attens,
+				self._remove_padding(atten_factor[rotate_idx][0], padding_width, full_width)
+			), axis=0)
+
 		grasp_predictions = self._get_pred(output_prob[0][0], padding_width, full_width)
 		for rotate_idx in range(1, len(output_prob)):
-			grasp_predictions = np.concatenate((
-				grasp_predictions,
+			grasp_predictions = np.concatenate((grasp_predictions,
 				self._get_pred(output_prob[rotate_idx][0], padding_width, full_width)
 			), axis=0)
 		# import pdb; pdb.set_trace()
-		return grasp_predictions, state_feat
+		return grasp_predictions, state_feat, attens
 
 	def _get_pred(self, prob, padding_width, full_width):
 		if self.method == 'reactive':
 			prob = F.softmax(prob, dim=1)  # Return affordances
 		# else (reinforcement): Return Q values
+		pred = self._remove_padding(prob, padding_width, full_width)
+		return pred
+
+	def _remove_padding(self, prob, padding_width, full_width):
 		prob = prob.cpu().data.numpy()
 		pred = prob[
 			:, 0,
@@ -193,7 +205,7 @@ class Trainer(object):
 			if not change_detected and not grasp_success == State.SUCCESS:
 				future_reward = 0
 			else:
-				next_grasp_predictions, next_state_feat = self.forward(
+				next_grasp_predictions, next_state_feat, _ = self.forward(
 					instruction, next_color_heightmap, next_depth_heightmap, is_volatile=True
 				)
 				future_reward = np.max(next_grasp_predictions)
@@ -210,7 +222,7 @@ class Trainer(object):
 		return label_value, reward_value
 
 	# Compute labels and back-propagate
-	def backprop(self, instruction, color_heightmap, depth_heightmap, best_pix_ind, label_value):
+	def backprop(self, instruction, color_map, depth_map, best_pix_ind, label_value):
 		fill_value = 2 if self.method == 'reactive' else 0  # Compute fill value, 2:no loss
 		# Compute labels
 		label = np.zeros((1, 320, 320)) + fill_value
@@ -226,11 +238,11 @@ class Trainer(object):
 		loss_value = 0
 		# if primitive_action == 'grasp':
 		# Do for-ward pass with specified rotation (to save gradients)
-		loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap, best_pix_ind[0],
+		loss_value += self._backward_loss(instruction, color_map, depth_map, best_pix_ind[0],
 										  label, label_weights)
 		# Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
 		opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
-		loss_value += self._backward_loss(instruction, color_heightmap, depth_heightmap,
+		loss_value += self._backward_loss(instruction, color_map, depth_map,
 										  opposite_rotate_idx, label, label_weights)
 		loss_value = loss_value / 2
 
@@ -239,7 +251,7 @@ class Trainer(object):
 		return loss_value
 
 	def _backward_loss(self, instruction, color_heightmap, depth_heightmap, rotate_idx, label, label_weights=None):
-		_, _ = self.forward(instruction, color_heightmap, depth_heightmap, False, rotate_idx)
+		_, _, _ = self.forward(instruction, color_heightmap, depth_heightmap, False, rotate_idx)
 		if self.method == 'reactive':
 			loss = self.grasp_criterion(
 				self.model.output_prob[0][0],
@@ -251,7 +263,6 @@ class Trainer(object):
 				Variable(torch.from_numpy(label).float().cuda())
 			) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
 			loss = loss.sum()
-		# import pdb; pdb.set_trace()
 		loss.backward()
 		return loss.cpu().data.numpy()
 
@@ -290,7 +301,7 @@ class Trainer(object):
 			sample_color_heightmap, sample_depth_heightmap = logger.load_heightmaps(sample_iteration, '0')
 
 			# Compute For-ward pass with sample
-			sample_grasp_predictions, sample_state_feat = self.forward(
+			sample_grasp_predictions, sample_state_feat, _ = self.forward(
 				sample_instruction, sample_color_heightmap, sample_depth_heightmap, is_volatile=True
 			)
 
@@ -304,36 +315,60 @@ class Trainer(object):
 			# Recompute prediction value, if sample_action == 'grasp':
 			self.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
 
-	def get_prediction_vis(self, predictions, color_heightmap, best_pix_ind):
+	def get_pred_vis(self, predictions, color_map, best_pix):
 		canvas = None
 		num_rotations = predictions.shape[0]
 		for canvas_row in range(int(num_rotations / 4)):
 			tmp_row_canvas = None
 			for canvas_col in range(4):
 				rotate_idx = canvas_row * 4 + canvas_col
-				prediction_vis = predictions[rotate_idx, :, :].copy()
-				# prediction_vis[prediction_vis < 0] = 0 # assume probability
-				# prediction_vis[prediction_vis > 1] = 1 # assume probability
-				prediction_vis = np.clip(prediction_vis, 0, 1)
-				prediction_vis.shape = (predictions.shape[1], predictions.shape[2])
-				prediction_vis = cv2.applyColorMap((prediction_vis * 255).astype(np.uint8), cv2.COLORMAP_JET)
-				if rotate_idx == best_pix_ind[0]:
-					prediction_vis = cv2.circle(
-						prediction_vis, (int(best_pix_ind[2]), int(best_pix_ind[1])), 7, (0, 0, 255), 2
-					)
-				prediction_vis = ndimage.rotate(prediction_vis, rotate_idx * (360.0 / num_rotations), reshape=False, order=0)
-				background_image = ndimage.rotate(color_heightmap, rotate_idx * (360.0 / num_rotations), reshape=False, order=0)
-				prediction_vis = (0.5 * cv2.cvtColor(background_image,
-								  cv2.COLOR_RGB2BGR) + 0.5 * prediction_vis).astype(np.uint8)
-				if tmp_row_canvas is None:
-					tmp_row_canvas = prediction_vis
-				else:
-					tmp_row_canvas = np.concatenate((tmp_row_canvas, prediction_vis), axis=1)
-			if canvas is None:
-				canvas = tmp_row_canvas
-			else:
-				canvas = np.concatenate((canvas, tmp_row_canvas), axis=0)
+				pred_vis = predictions[rotate_idx, :, :].copy()
+				pred_vis.shape = (predictions.shape[1], predictions.shape[2])
+				pred_vis = (np.clip(pred_vis, 0, 1) * 255).astype(np.uint8)
+				pred_vis = cv2.applyColorMap(pred_vis, cv2.COLORMAP_JET)
+				if rotate_idx == best_pix[0]:
+					pix_idx = (int(best_pix[2]), int(best_pix[1]))
+					pred_vis = cv2.circle(pred_vis, pix_idx,7, (0, 0, 255), 2)
+				r_angle = rotate_idx * (360.0 / num_rotations)
+				pred_vis = ndimage.rotate(pred_vis, r_angle, reshape=False, order=0)
+				
+				background_image = ndimage.rotate(color_map, r_angle, reshape=False, order=0)
+				background_image = cv2.cvtColor(background_image, cv2.COLOR_RGB2BGR)
+				
+				pred_vis = (0.5 * background_image + 0.5 * pred_vis).astype(np.uint8)
 
+				if tmp_row_canvas is None: tmp_row_canvas = pred_vis
+				else: tmp_row_canvas = np.concatenate((tmp_row_canvas, pred_vis), axis=1)
+			if canvas is None: canvas = tmp_row_canvas
+			else: canvas = np.concatenate((canvas, tmp_row_canvas), axis=0)
+		return canvas
+
+	def get_atten_vis(self, atten, color_map, best_pix):
+		canvas = None
+		num_rotations = atten.shape[0]
+		for canvas_row in range(int(num_rotations / 4)):
+			tmp_row_canvas = None
+			for canvas_col in range(4):
+				rotate_idx = canvas_row * 4 + canvas_col
+				atten_vis = atten[rotate_idx, :, :].copy()
+				atten_vis.shape = (atten.shape[1], atten.shape[2])
+				atten_vis = (np.clip(atten_vis, 0, 1) * 255).astype(np.uint8)
+				atten_vis = cv2.applyColorMap(atten_vis, cv2.COLORMAP_JET)
+				if rotate_idx == best_pix[0]:
+					pix_idx = (int(best_pix[2]), int(best_pix[1]))
+					atten_vis = cv2.circle(atten_vis, pix_idx,7, (0, 0, 255), 2)
+				r_angle = rotate_idx * (360.0 / num_rotations)
+				atten_vis = ndimage.rotate(atten_vis, r_angle, reshape=False, order=0)
+				
+				background_image = ndimage.rotate(color_map, r_angle, reshape=False, order=0)
+				background_image = cv2.cvtColor(background_image, cv2.COLOR_RGB2BGR)
+				
+				atten_vis = (0.5 * background_image + 0.5 * atten_vis).astype(np.uint8)
+
+				if tmp_row_canvas is None: tmp_row_canvas = atten_vis
+				else: tmp_row_canvas = np.concatenate((tmp_row_canvas, atten_vis), axis=1)
+			if canvas is None: canvas = tmp_row_canvas
+			else: canvas = np.concatenate((canvas, tmp_row_canvas), axis=0)
 		return canvas
 
 	def grasp_heuristic(self, depth_heightmap):
