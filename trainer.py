@@ -214,6 +214,7 @@ class Trainer(object):
 			print('Expected reward: %f + %f x %f = %f' % (
 				current_reward, self.future_reward_discount, future_reward, expected_reward
 			))
+			# attention this line
 			label_value, reward_value = expected_reward, current_reward
 
 		self.label_value_log.append([label_value])
