@@ -39,13 +39,11 @@ class EncoderLSTM(nn.Module):
 		batch_size = inputs.size(0)
 		h0 = Variable(torch.zeros(
 			self.num_layers * self.num_directions,
-			batch_size,
-			self.hidden_size
+			batch_size, self.hidden_size
 		), requires_grad=False)
 		c0 = Variable(torch.zeros(
 			self.num_layers * self.num_directions,
-			batch_size,
-			self.hidden_size
+			batch_size, self.hidden_size
 		), requires_grad=False)
 		return h0.cuda(), c0.cuda()
 
@@ -106,9 +104,9 @@ class BiAttention(nn.Module):
 		return img_feat_map, atten
 
 
-class BaseNet(nn.Module):
+class reinforcement_net(nn.Module):
 
-	def __init__(self, grasp_conv1_out_channels=3, **kwargs):
+	def __init__(self, **kwargs):
 		super().__init__()
 		self.text_encoder = EncoderLSTM(**kwargs)
 		# self.text_encoder = EncoderLSTM(**kwargs)
@@ -127,7 +125,7 @@ class BaseNet(nn.Module):
 			('grasp-conv0', nn.Conv2d(2048, 64, kernel_size=1, stride=1, bias=False)),
 			('grasp-norm1', nn.BatchNorm2d(64)),
 			('grasp-relu1', nn.ReLU(inplace=True)),
-			('grasp-conv1', nn.Conv2d(64, grasp_conv1_out_channels, kernel_size=1, stride=1, bias=False))
+			('grasp-conv1', nn.Conv2d(64, 1, kernel_size=1, stride=1, bias=False))
 			# ('grasp-upsample2', nn.Upsample(scale_factor=4, mode='bilinear'))
 		]))
 		self.unsample = nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
@@ -224,16 +222,6 @@ class BaseNet(nn.Module):
 		affine_mat_after.shape = (2, 3, 1)
 		affine_mat_after = torch.from_numpy(affine_mat_after).permute(2, 0, 1).float()
 		return affine_mat_after
-
-
-class reactive_net(BaseNet):
-    def __init__(self, **kwargs):
-        super().__init__(grasp_conv1_out_channels=3, **kwargs)
-
-
-class reinforcement_net(BaseNet):
-    def __init__(self, **kwargs):
-        super().__init__(grasp_conv1_out_channels=1, **kwargs)
 
 
 class CNN_Text(nn.Module):

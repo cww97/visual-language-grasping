@@ -47,8 +47,7 @@ class Solver():
 
 		# Initialize trainer
 		self.snapshot_file = args.snapshot_file
-		self.trainer = Trainer(self.method, args.future_reward_discount,
-								self.is_testing, args.load_snapshot, self.snapshot_file)
+		self.trainer = Trainer(args.future_reward_discount, self.is_testing, args.load_snapshot, self.snapshot_file)
 
 		# Initialize data logger
 		self.logger = Logger(args.continue_logging, args.logging_directory)
@@ -78,8 +77,7 @@ class Solver():
 				self._get_best_pix()
 				best_rotation_angle, primitive_position = self._get_action_data()
 
-				# Initialize variables that influence reward TODO 这句话是脱裤子放屁吗
-				self.grasp_success = None
+				# Initialize variables that influence reward
 				self.grasp_success = self.robot.grasp(  # Execute
 					primitive_position, best_rotation_angle, self.workspace_limits
 				)
@@ -153,9 +151,9 @@ class Solver():
 		action_thread.start()
 		self.exit_called = False
 
-		prev_color_heightmap = None
+		prev_color_map = None
 		prev_depth_heightmap = None
-		prev_valid_depth_heightmap = None
+		prev_depth_map = None
 		prev_grasp_success = None
 		prev_grasp_pred = None
 		prev_best_pix_idx = None
@@ -178,32 +176,32 @@ class Solver():
 				self.executing_action = True  # Robot: Execute action in another thread
 
 			# Run training iteration in current thread (aka training thread)
-			if prev_color_heightmap is not None:
+			if prev_color_map is not None:
 				change_detected = self._detect_changes(depth_heightmap, prev_depth_heightmap, prev_grasp_success)
 
 				# Compute training labels
-				label_value, reward_value = self.trainer.get_label_value(
+				expected_reward, current_reward = self.trainer.get_reward_value(
 					prev_grasp_success, change_detected, prev_grasp_pred,
 					self.robot.instruction, self.color_map, self.valid_depth_heightmap
 				)
 
 				# Back-propagate
-				loss_value = self.trainer.backprop(self.robot.instruction, prev_color_heightmap, prev_valid_depth_heightmap,
-													prev_best_pix_idx, label_value)
+				pre_env = (self.robot.instruction, prev_color_map, prev_depth_map)
+				loss_value = self.trainer.backprop(pre_env, prev_best_pix_idx, expected_reward)
 
 				if self.experience_replay and not self.is_testing:
-					self.trainer.experience_replay(reward_value, self.logger)
+					self.trainer.experience_replay(current_reward, self.logger)
 
-				self._log_board_save(prev_grasp_success, label_value, reward_value, loss_value)
+				self._log_board_save(prev_grasp_success, expected_reward, current_reward, loss_value)
 				
 			# Sync both action thread and training thread
 			while self.executing_action: time.sleep(0.01)
 			if self.exit_called: break
 
 			# Save information for next training step
-			prev_color_heightmap = self.color_map.copy()
+			prev_color_map = self.color_map.copy()
 			prev_depth_heightmap = depth_heightmap.copy()
-			prev_valid_depth_heightmap = self.valid_depth_heightmap.copy()
+			prev_depth_map = self.valid_depth_heightmap.copy()
 			prev_grasp_success = self.grasp_success
 			prev_grasp_pred = self.grasp_pred.copy()
 			prev_best_pix_idx = self.best_pix
@@ -286,23 +284,18 @@ class Solver():
 
 		return change_detected
 
-	def _log_board_save(self, prev_grasp_success, label_value, reward_value, loss_value):
+	def _log_board_save(self, prev_grasp_success, expected_reward, current_reward, loss_value):
 		'''
 		$ tensorboard --host 0.0.0.0 --logdir runs
 		'''
-		self.logger.write_to_log('label-value', self.trainer.label_value_log)
-		self.logger.write_to_log('reward-value', self.trainer.reward_value_log)
+		self.logger.write_to_log('expected-reward', self.trainer.expected_reward_log)
+		self.logger.write_to_log('current-reward', self.trainer.current_reward_log)
 
 		# record on tensorboard
-		if self.method == 'reactive':
-			self.writer.add_scalar('reactive/grasp_success', prev_grasp_success.value, self.trainer.iteration)
-			self.writer.add_scalar('reactive/label', label_value, self.trainer.iteration)
-			self.writer.add_scalar('reactive/loss', loss_value, self.trainer.iteration)
-		elif self.method == 'reinforcement':
-			self.writer.add_scalar('RL/grasp_success', prev_grasp_success.value, self.trainer.iteration)
-			self.writer.add_scalar('RL/expected_reward', label_value, self.trainer.iteration)
-			self.writer.add_scalar('RL/current_reward', reward_value, self.trainer.iteration)
-			self.writer.add_scalar('RL/loss', loss_value, self.trainer.iteration)
+		self.writer.add_scalar('VLG/grasp_success', prev_grasp_success.value, self.trainer.iteration)
+		self.writer.add_scalar('VLG/expected_reward', expected_reward, self.trainer.iteration)
+		self.writer.add_scalar('VLG/current_reward', current_reward, self.trainer.iteration)
+		self.writer.add_scalar('VLG/loss', loss_value, self.trainer.iteration)
 		self.logger.write_to_log('grasp-success', self.trainer.grasp_success_log)
 
 		# Save model snapshot

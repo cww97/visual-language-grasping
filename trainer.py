@@ -9,7 +9,7 @@ from torch.autograd import Variable
 
 from envs.data import Data as TextData
 from envs.robot import State
-from models import reactive_net, reinforcement_net
+from models import reinforcement_net
 from utils import CrossEntropyLoss2d
 # from envs.data import Data as TextData
 # import pdb
@@ -17,41 +17,21 @@ from utils import CrossEntropyLoss2d
 
 class Trainer(object):
 
-	def __init__(self, method, future_reward_discount,
+	def __init__(self, future_reward_discount,
 				 is_testing, load_snapshot, snapshot_file):
 		assert torch.cuda.is_available()
-		self.method = method
 		self.text_data = TextData()
 		vocab, pad_idx = len(self.text_data.text_field.vocab), self.text_data.padding_idx
 
-		# Fully convolutional classification network for supervised learning
-		if self.method == 'reactive':
-			self.model = reactive_net(vocab_size=vocab, padding_idx=pad_idx)
-
-			# Initialize classification loss
-			grasp_num_classes = 3  # 0 - grasp, 1 - failed grasp, 2 - no loss
-			grasp_class_weights = torch.ones(grasp_num_classes)
-			grasp_class_weights[grasp_num_classes - 1] = 0
-			self.grasp_criterion = CrossEntropyLoss2d(grasp_class_weights.cuda()).cuda()
-
-		# Fully convolutional Q network for deep reinforcement learning
-		elif self.method == 'reinforcement':
-			self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx)
-			self.future_reward_discount = future_reward_discount
-			# Initialize Huber loss
-			self.criterion = torch.nn.SmoothL1Loss(reduce=False).cuda()  # Huber losss
-
-		# Load pre-trained model
-		if load_snapshot:
+		self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx)  # 'reinforcement'
+		if load_snapshot:  # Load pre-trained model
 			self.model.load_state_dict(torch.load(snapshot_file))
 			print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
+		self.model = self.model.cuda()  # Convert model from CPU to GPU		
+		self.model.train()  # Set model to training mode
 
-		# Convert model from CPU to GPU
-		self.model = self.model.cuda()
-
-		# Set model to training mode
-		self.model.train()
-
+		self.future_reward_discount = future_reward_discount
+		self.criterion = torch.nn.SmoothL1Loss(reduce=False).cuda()  # Initialize Huber loss
 		# Initialize optimizer
 		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=2e-5)
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
@@ -59,8 +39,8 @@ class Trainer(object):
 
 		# Initialize lists to save execution info and RL variables
 		self.executed_action_log = []
-		self.label_value_log = []
-		self.reward_value_log = []
+		self.expected_reward_log = []
+		self.current_reward_log = []
 		self.predicted_value_log = []
 		self.use_heuristic_log = []
 		self.clearance_log = []
@@ -72,18 +52,18 @@ class Trainer(object):
 		self.iteration = self.executed_action_log.shape[0] - 2
 		self.executed_action_log = self.executed_action_log[0:self.iteration, :]
 		self.executed_action_log = self.executed_action_log.tolist()
-		self.label_value_log = np.loadtxt(os.path.join(transitions_directory, 'label-value.log.txt'), delimiter=' ')
-		self.label_value_log = self.label_value_log[0:self.iteration]
-		self.label_value_log.shape = (self.iteration, 1)
-		self.label_value_log = self.label_value_log.tolist()
+		self.expected_reward_log = np.loadtxt(os.path.join(transitions_directory, 'label-value.log.txt'), delimiter=' ')
+		self.expected_reward_log = self.expected_reward_log[0:self.iteration]
+		self.expected_reward_log.shape = (self.iteration, 1)
+		self.expected_reward_log = self.expected_reward_log.tolist()
 		self.predicted_value_log = np.loadtxt(os.path.join(transitions_directory, 'predicted-value.log.txt'), delimiter=' ')
 		self.predicted_value_log = self.predicted_value_log[0:self.iteration]
 		self.predicted_value_log.shape = (self.iteration, 1)
 		self.predicted_value_log = self.predicted_value_log.tolist()
-		self.reward_value_log = np.loadtxt(os.path.join(transitions_directory, 'reward-value.log.txt'), delimiter=' ')
-		self.reward_value_log = self.reward_value_log[0:self.iteration]
-		self.reward_value_log.shape = (self.iteration, 1)
-		self.reward_value_log = self.reward_value_log.tolist()
+		self.current_reward_log = np.loadtxt(os.path.join(transitions_directory, 'reward-value.log.txt'), delimiter=' ')
+		self.current_reward_log = self.current_reward_log[0:self.iteration]
+		self.current_reward_log.shape = (self.iteration, 1)
+		self.current_reward_log = self.current_reward_log.tolist()
 		self.use_heuristic_log = np.loadtxt(os.path.join(transitions_directory, 'use-heuristic.log.txt'), delimiter=' ')
 		self.use_heuristic_log = self.use_heuristic_log[0:self.iteration]
 		self.use_heuristic_log.shape = (self.iteration, 1)
@@ -158,20 +138,13 @@ class Trainer(object):
 				self._remove_padding(atten_factor[rotate_idx][0], padding_width, full_width)
 			), axis=0)
 
-		grasp_predictions = self._get_pred(output_prob[0][0], padding_width, full_width)
+		grasp_predictions = self._remove_padding(output_prob[0][0], padding_width, full_width)
 		for rotate_idx in range(1, len(output_prob)):
 			grasp_predictions = np.concatenate((grasp_predictions,
-				self._get_pred(output_prob[rotate_idx][0], padding_width, full_width)
+				self._remove_padding(output_prob[rotate_idx][0], padding_width, full_width)
 			), axis=0)
 		# import pdb; pdb.set_trace()
 		return grasp_predictions, state_feat, attens
-
-	def _get_pred(self, prob, padding_width, full_width):
-		if self.method == 'reactive':
-			prob = F.softmax(prob, dim=1)  # Return affordances
-		# else (reinforcement): Return Q values
-		pred = self._remove_padding(prob, padding_width, full_width)
-		return pred
 
 	def _remove_padding(self, prob, padding_width, full_width):
 		prob = prob.cpu().data.numpy()
@@ -182,110 +155,85 @@ class Trainer(object):
 		]
 		return pred
 
-	def get_label_value(
-		self,
-		grasp_success,
-		change_detected,
-		prev_grasp_predictions,
-		instruction,
-		next_color_heightmap,
-		next_depth_heightmap
+	def get_reward_value(
+		self, grasp_success, change_detected, prev_grasp_predictions,
+		instruction, next_color_map, next_depth_map
 	):
-		if self.method == 'reactive':
-			# label: 0 - grasp, 1 - failed grasp, 2 - no loss
-			label_value = 0 if grasp_success == State.SUCCESS else 1  # TODO, wrong obj
-			print('grasp_success = %s, Label value: %d' % (str(grasp_success), label_value))
-			label_value, reward_value = label_value, label_value
+		# Compute current reward, deal with put in the future
+		current_reward = 1.0 if grasp_success == State.SUCCESS else 0.0
 
-		elif self.method == 'reinforcement':
-			# Compute current reward, deal with put in the future
-			current_reward = 1.0 if grasp_success == State.SUCCESS else 0.0
+		# Compute future reward
+		if not change_detected and not grasp_success == State.SUCCESS:
+			future_reward = 0
+		else:
+			next_grasp_predictions, next_state_feat, _ = self.forward(
+				instruction, next_color_map, next_depth_map, is_volatile=True
+			)
+			future_reward = np.max(next_grasp_predictions)
+		print('Reward: (Current = %f, Future = %f)' % (current_reward, future_reward))
+		expected_reward = current_reward + self.future_reward_discount * future_reward
+		print('Expected reward: %f + %f x %f = %f' % (
+			current_reward, self.future_reward_discount, future_reward, expected_reward
+		))
 
-			# Compute future reward
-			if not change_detected and not grasp_success == State.SUCCESS:
-				future_reward = 0
-			else:
-				next_grasp_predictions, next_state_feat, _ = self.forward(
-					instruction, next_color_heightmap, next_depth_heightmap, is_volatile=True
-				)
-				future_reward = np.max(next_grasp_predictions)
-			print('Reward: (Current = %f, Future = %f)' % (current_reward, future_reward))
-			expected_reward = current_reward + self.future_reward_discount * future_reward
-			print('Expected reward: %f + %f x %f = %f' % (
-				current_reward, self.future_reward_discount, future_reward, expected_reward
-			))
-			# attention this line
-			label_value, reward_value = expected_reward, current_reward
-
-		self.label_value_log.append([label_value])
-		self.reward_value_log.append([reward_value])
+		self.expected_reward_log.append([expected_reward])
+		self.current_reward_log.append([current_reward])
 		self.grasp_success_log.append([grasp_success.value])
-		return label_value, reward_value
+		return expected_reward, current_reward
 
 	# Compute labels and back-propagate
-	def backprop(self, instruction, color_map, depth_map, best_pix_ind, label_value):
-		fill_value = 2 if self.method == 'reactive' else 0  # Compute fill value, 2:no loss
-		# Compute labels
-		label = np.zeros((1, 320, 320)) + fill_value
-		label[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = label_value
-		# Compute label mask
-		if self.method == 'reactive': label_weights = None  # just a fill
-		elif self.method == 'reinforcement':
-			label_weights = np.zeros(label.shape)  # Compute label mask
-			label_weights[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = 1
+	def backprop(self, environment, best_pix_ind, expected_reward):
+		'''pre_env: (pre_instruction, prev_color_map, prev_depth_map)'''
+		label, label_weights = self._get_label_and_weights(best_pix_ind, expected_reward)
 
 		# Compute loss and backward pass
 		self.optimizer.zero_grad()
 		loss_value = 0
-		# if primitive_action == 'grasp':
 		# Do for-ward pass with specified rotation (to save gradients)
-		loss_value += self._backward_loss(instruction, color_map, depth_map, best_pix_ind[0],
-										  label, label_weights)
+		loss_value += self._backward_loss(environment, best_pix_ind[0], label, label_weights)
 		# Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
 		opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
-		loss_value += self._backward_loss(instruction, color_map, depth_map,
-										  opposite_rotate_idx, label, label_weights)
-		loss_value = loss_value / 2
+		loss_value += self._backward_loss(environment, opposite_rotate_idx, label, label_weights)
+		loss_value /= 2
 
 		print('Training loss: %f' % (loss_value))
 		self.optimizer.step()
 		return loss_value
 
-	def _backward_loss(self, instruction, color_heightmap, depth_heightmap, rotate_idx, label, label_weights=None):
-		_, _, _ = self.forward(instruction, color_heightmap, depth_heightmap, False, rotate_idx)
-		if self.method == 'reactive':
-			loss = self.grasp_criterion(
-				self.model.output_prob[0][0],
-				Variable(torch.from_numpy(label).long().cuda())
-			)
-		else:
-			loss = self.criterion(
-				self.model.output_prob[0][0].view(1, 320, 320),
-				Variable(torch.from_numpy(label).float().cuda())
-			) * Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-			loss = loss.sum()
+	def _backward_loss(self, environment, rotate_idx, label, label_weights=None):
+		_, _, _ = self.forward(*environment, False, rotate_idx)
+		output = self.model.output_prob[0][0].view(1, 320, 320)
+		loss = (self.criterion(output, label) * label_weights)
+		loss = loss.sum()
 		loss.backward()
 		return loss.cpu().data.numpy()
+
+	def _get_label_and_weights(self, best_pix_ind, expected_reward):
+		# Compute label
+		label = np.zeros((1, 320, 320))
+		label[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = expected_reward
+		label = Variable(torch.from_numpy(label).float().cuda())
+		# Compute label mask
+		label_weights = np.zeros(label.shape)  # Compute label mask
+		label_weights[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = 1
+		label_weights = Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
+		return label, label_weights
 
 	def experience_replay(self, reward_value, logger):
 		# Do sampling for experience replay
 		sample_reward_value = 0 if reward_value == 1 else 1  # jingsui
 		# Get samples of the same primitive but with different results
 		sample_idxs = np.argwhere(
-			np.asarray(self.reward_value_log)[1:self.iteration, 0] == sample_reward_value
+			np.asarray(self.current_reward_log)[1:self.iteration, 0] == sample_reward_value
 		)
 
 		if sample_idxs.size > 0:
 			# Find sample with highest surprise value
-			if self.method == 'reactive':
-				sample_surprise_values = np.abs(
-					np.asarray(self.predicted_value_log)[sample_idxs[:, 0]] - (1 - sample_reward_value)
-				)
-			elif self.method == 'reinforcement':
-				sample_surprise_values = np.abs(
-					np.asarray(self.predicted_value_log)[sample_idxs[:, 0]] -
-					np.asarray(self.label_value_log)[sample_idxs[:, 0]]
-				)
+			# TODO
+			sample_surprise_values = np.abs(
+				np.asarray(self.predicted_value_log)[sample_idxs[:, 0]] -
+				np.asarray(self.expected_reward_log)[sample_idxs[:, 0]]
+			)
 			sorted_surprise_idx = np.argsort(sample_surprise_values[:, 0])
 			sorted_sample_idxs = sample_idxs[sorted_surprise_idx, 0]
 			pow_law_exp = 2
@@ -300,6 +248,7 @@ class Trainer(object):
 			# logger.get_date(sample_iteration)
 			sample_instruction = logger.load_instruction(sample_iteration, '0')
 			sample_color_heightmap, sample_depth_heightmap = logger.load_heightmaps(sample_iteration, '0')
+			sample_env = (sample_instruction, sample_color_heightmap, sample_depth_heightmap)
 
 			# Compute For-ward pass with sample
 			sample_grasp_predictions, sample_state_feat, _ = self.forward(
@@ -308,10 +257,8 @@ class Trainer(object):
 
 			# Get labels for sample and back-propagate
 			sample_pix_idx = (np.asarray(self.executed_action_log)[sample_iteration, 1:4]).astype(int)
-			self.backprop(
-				sample_instruction, sample_color_heightmap, sample_depth_heightmap,
-				sample_pix_idx, sample_reward_value
-			)
+			
+			self.backprop(sample_env, sample_pix_idx, sample_reward_value)
 
 			# Recompute prediction value, if sample_action == 'grasp':
 			self.predicted_value_log[sample_iteration] = [np.max(sample_grasp_predictions)]
