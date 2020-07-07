@@ -151,43 +151,38 @@ class Solver():
 		action_thread.start()
 		self.exit_called = False
 
-		prev_color_map = None
 		prev_depth_heightmap = None
-		prev_depth_map = None
+		prev_env = None
 		prev_grasp_success = None
 		prev_grasp_pred = None
-		prev_best_pix_idx = None
+		prev_action = None
 
 		# Start main training/testing loop
 		while True:
 			print('\n%s iteration: %d' % ('Testing' if self.is_testing else 'Training', self.trainer.iteration))
 			iteration_time_0 = time.time()
-
 			# Make sure simulation is still stable (if not, reset simulation)
 			if self.is_sim: self.robot.check_sim()
 			depth_heightmap = self._get_imgs()
 			if self._check_restart(prev_grasp_success): continue
 
 			if not self.exit_called:  # Run For-ward pass with network to get affordances
-				print('instruction: %s' % (self.robot.instruction))  # nb
-				self.grasp_pred, _, self.attens = self.trainer.forward(
-					self.robot.instruction, self.color_map, self.valid_depth_heightmap, is_volatile=True
-				)
+				print('instruction: %s' % (self.robot.instruction))
+				cur_env = (self.robot.instruction, self.color_map, self.valid_depth_heightmap)
+				self.grasp_pred, _, self.attens = self.trainer.forward(cur_env, is_volatile=True)
 				self.executing_action = True  # Robot: Execute action in another thread
 
 			# Run training iteration in current thread (aka training thread)
-			if prev_color_map is not None:
+			if prev_env is not None:
 				change_detected = self._detect_changes(depth_heightmap, prev_depth_heightmap, prev_grasp_success)
 
 				# Compute training labels
 				expected_reward, current_reward = self.trainer.get_reward_value(
-					prev_grasp_success, change_detected, prev_grasp_pred,
-					self.robot.instruction, self.color_map, self.valid_depth_heightmap
+					prev_grasp_success, change_detected, prev_grasp_pred, cur_env
 				)
 
 				# Back-propagate
-				pre_env = (self.robot.instruction, prev_color_map, prev_depth_map)
-				loss_value = self.trainer.backprop(pre_env, prev_best_pix_idx, expected_reward)
+				loss_value = self.trainer.backprop(prev_env, prev_action, expected_reward)
 
 				if self.experience_replay and not self.is_testing:
 					self.trainer.experience_replay(current_reward, self.logger)
@@ -199,12 +194,13 @@ class Solver():
 			if self.exit_called: break
 
 			# Save information for next training step
-			prev_color_map = self.color_map.copy()
 			prev_depth_heightmap = depth_heightmap.copy()
-			prev_depth_map = self.valid_depth_heightmap.copy()
+			prev_env = (self.robot.instruction,  # prev_instruction
+						self.color_map.copy(),  # prev_color_map
+						self.valid_depth_heightmap.copy())  # prev_depth_map
 			prev_grasp_success = self.grasp_success
 			prev_grasp_pred = self.grasp_pred.copy()
-			prev_best_pix_idx = self.best_pix
+			prev_action = self.best_pix
 
 			self.trainer.iteration += 1
 			iteration_time_1 = time.time()

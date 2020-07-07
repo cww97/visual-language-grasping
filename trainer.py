@@ -79,7 +79,8 @@ class Trainer(object):
 		
 
 	# Compute for ward pass through model to compute affordances/Q
-	def forward(self, instruction, color_heightmap, depth_heightmap, is_volatile=False, specific_rotation=-1):
+	def forward(self, environment, is_volatile=False, specific_rotation=-1):
+		instruction, color_heightmap, depth_heightmap = environment
 
 		# cslnb, convert text_instruction -> text_tensor
 		instruction_tensor = self.text_data.get_tensor(instruction).cuda()
@@ -148,17 +149,13 @@ class Trainer(object):
 
 	def _remove_padding(self, prob, padding_width, full_width):
 		prob = prob.cpu().data.numpy()
-		pred = prob[
-			:, 0,
+		pred = prob[:, 0,
 			(padding_width // 2): (full_width // 2 - padding_width // 2),
 			(padding_width // 2): (full_width // 2 - padding_width // 2)
 		]
 		return pred
 
-	def get_reward_value(
-		self, grasp_success, change_detected, prev_grasp_predictions,
-		instruction, next_color_map, next_depth_map
-	):
+	def get_reward_value(self, grasp_success, change_detected, prev_grasp_predictions, next_env):
 		# Compute current reward, deal with put in the future
 		current_reward = 1.0 if grasp_success == State.SUCCESS else 0.0
 
@@ -166,15 +163,10 @@ class Trainer(object):
 		if not change_detected and not grasp_success == State.SUCCESS:
 			future_reward = 0
 		else:
-			next_grasp_predictions, next_state_feat, _ = self.forward(
-				instruction, next_color_map, next_depth_map, is_volatile=True
-			)
-			future_reward = np.max(next_grasp_predictions)
-		print('Reward: (Current = %f, Future = %f)' % (current_reward, future_reward))
+			next_grasp_pred, _, _ = self.forward(next_env, is_volatile=True)
+			future_reward = np.max(next_grasp_pred)
 		expected_reward = current_reward + self.future_reward_discount * future_reward
-		print('Expected reward: %f + %f x %f = %f' % (
-			current_reward, self.future_reward_discount, future_reward, expected_reward
-		))
+		# print('Reward: (Current = %f, Expected = %f)' % (current_reward, expected_reward))
 
 		self.expected_reward_log.append([expected_reward])
 		self.current_reward_log.append([current_reward])
@@ -182,17 +174,20 @@ class Trainer(object):
 		return expected_reward, current_reward
 
 	# Compute labels and back-propagate
-	def backprop(self, environment, best_pix_ind, expected_reward):
-		'''pre_env: (pre_instruction, prev_color_map, prev_depth_map)'''
-		label, label_weights = self._get_label_and_weights(best_pix_ind, expected_reward)
+	def backprop(self, environment, action, expected_reward):
+		'''
+		environment: (pre_instruction, prev_color_map, prev_depth_map)
+		action: best_pixcel_idx (rotate_idx, x, y)
+		'''
+		label, label_weights = self._get_label_and_weights(action, expected_reward)
 
 		# Compute loss and backward pass
 		self.optimizer.zero_grad()
 		loss_value = 0
 		# Do for-ward pass with specified rotation (to save gradients)
-		loss_value += self._backward_loss(environment, best_pix_ind[0], label, label_weights)
+		loss_value += self._backward_loss(environment, action[0], label, label_weights)
 		# Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
-		opposite_rotate_idx = (best_pix_ind[0] + self.model.num_rotations / 2) % self.model.num_rotations
+		opposite_rotate_idx = (action[0] + self.model.num_rotations / 2) % self.model.num_rotations
 		loss_value += self._backward_loss(environment, opposite_rotate_idx, label, label_weights)
 		loss_value /= 2
 
@@ -201,7 +196,7 @@ class Trainer(object):
 		return loss_value
 
 	def _backward_loss(self, environment, rotate_idx, label, label_weights=None):
-		_, _, _ = self.forward(*environment, False, rotate_idx)
+		_, _, _ = self.forward(environment, False, rotate_idx)
 		output = self.model.output_prob[0][0].view(1, 320, 320)
 		loss = (self.criterion(output, label) * label_weights)
 		loss = loss.sum()
