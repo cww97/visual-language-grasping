@@ -6,7 +6,7 @@ from enum import Enum
 class State(Enum):
     SUCCESS = 0
     FAIL = 1
-    WRONG = 2
+    WRONG = -1
 
 
 class Robot(metaclass=ABCMeta):

@@ -144,11 +144,12 @@ class reinforcement_net(nn.Module):
 		self.interm_feat = []
 		self.output_prob = []
 
-	def forward(self, instruction, input_color_data, input_depth_data, is_volatile=False, specific_rotation=-1):
+	def forward(self, environment, is_volatile=False, specific_rotation=-1):
 		"""
 		is_volatile: true for each rotation, false for specific_rotation
 		use is_volatile=false in backward
 		"""
+		instruction, input_color_data, input_depth_data = environment
 		text_feature, _, _ = self.text_encoder(instruction, instruction.size()[1:])  # .detach()
 		text_feature = text_feature[:, -1, :]  # (1, d)
 
@@ -162,7 +163,7 @@ class reinforcement_net(nn.Module):
 			interm_feat = self.interm_feat = []
 
 		# Apply rotations to images
-		attens = []
+		# attens = []
 		for rotate_idx in rotations:
 			rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
 			rotate_color, rotate_depth = self._rotate(rotate_theta, input_color_data, input_depth_data)
@@ -180,14 +181,14 @@ class reinforcement_net(nn.Module):
 
 			# for attention visualization
 			atten = self.unsample.forward(F.grid_sample(atten_factor, flow_grid_after, mode='nearest'))
-			attens.append([atten])
+			# attens.append([atten])
 			# Forward pass through branches, undo rotation on output predictions, upsample results
 			grasp_feat = self.graspnet(interm_grasp_feat)
 			grasp_feat = self.unsample.forward(F.grid_sample(grasp_feat, flow_grid_after, mode='nearest'))
 			output_prob.append([grasp_feat])
 
 		if is_volatile: torch.set_grad_enabled(True)
-		return output_prob, interm_feat, attens
+		return output_prob  # , interm_feat, attens
 
 	def _rotate(self, rotate_theta, input_color_data, input_depth_data):
 		# Compute sample grid for rotation BEFORE neural network
