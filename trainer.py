@@ -8,17 +8,15 @@ from scipy import ndimage
 from torch.autograd import Variable
 
 from envs.data import Data as TextData
-from envs.robot import State
+from envs.robot import Reward
 from models import reinforcement_net
 from utils import CrossEntropyLoss2d
-# from envs.data import Data as TextData
-# import pdb
 from collections import namedtuple
 import random
 
+State = namedtuple('State', ('instruction', 'color_data', 'depth_data'))
+Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
 
 class ReplayMemory(object):
 
@@ -136,7 +134,7 @@ class Trainer(object):
 		loss_value += self._backward_loss(state, opposite_rotate_idx, label, label_weights)
 		loss_value /= 2
 
-		print('Training loss: %f' % (loss_value))
+		# print('Training loss: %f' % (loss_value))
 		self.optimizer.step()
 		return loss_value
 

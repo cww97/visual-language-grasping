@@ -7,7 +7,7 @@ import yaml
 import utils
 from . import vrep
 from ..robot import Robot as BaseRobot
-from ..robot import State
+from ..robot import Reward
 from ..data import Data as TextData
 
 
@@ -67,7 +67,7 @@ class SimRobot(BaseRobot):
 			exit()
 		else:
 			print('Connected to simulation.')
-			self.restart_sim()
+			# self.restart_sim()
 
 		# Setup virtual camera in simulation
 		self.setup_sim_camera()
@@ -75,7 +75,7 @@ class SimRobot(BaseRobot):
 		self.target_handle = None
 
 		# Add objects to simulation environment
-		self.add_objects()
+		# self.add_objects()
 
 	def setup_sim_camera(self):
 
@@ -147,15 +147,23 @@ class SimRobot(BaseRobot):
 			time.sleep(1)
 			sim_ret, gripper_position = vrep.simxGetObjectPosition(self.sim_client, self.RG2_tip_handle, -1, vrep.simx_opmode_blocking)
 
-	def check_sim(self):
+	def is_stable(self):
 		# Check if simulation is stable by checking if gripper is within workspace
 		sim_ret, gripper_position = vrep.simxGetObjectPosition(self.sim_client, self.RG2_tip_handle, -1,
-																vrep.simx_opmode_blocking)
-		sim_ok = gripper_position[0] > self.workspace_limits[0][0] - 0.1 and gripper_position[0] < self.workspace_limits[0][1] + 0.1 and gripper_position[1] > self.workspace_limits[1][0] - 0.1 and gripper_position[1] < self.workspace_limits[1][1] + 0.1 and gripper_position[2] > self.workspace_limits[2][0] and gripper_position[2] < self.workspace_limits[2][1]
-		if not sim_ok:
-			print('Simulation unstable. Restarting environment.')
-			self.restart_sim()
-			self.add_objects()
+															   vrep.simx_opmode_blocking)
+		sim_is_ok = gripper_position[0] > self.workspace_limits[0][0] - 0.1 and \
+					gripper_position[0] < self.workspace_limits[0][1] + 0.1 and \
+					gripper_position[1] > self.workspace_limits[1][0] - 0.1 and \
+					gripper_position[1] < self.workspace_limits[1][1] + 0.1 and \
+					gripper_position[2] > self.workspace_limits[2][0] and \
+					gripper_position[2] < self.workspace_limits[2][1]
+		if not sim_is_ok:
+			print('Simulation unstable, Reset.')
+		return sim_is_ok
+
+	def reset(self):
+		self.restart_sim()
+		self.add_objects()
 
 	# def stop_sim(self):
 	#     if self.is_sim:
@@ -315,6 +323,12 @@ class SimRobot(BaseRobot):
 
 	# Primitives ----------------------------------------------------------
 
+	def step(self, *args):
+		reward = self.grasp(*args)
+		done = (reward == Reward.SUCCESS)
+		# print(reward, done)
+		return reward.value, done
+
 	def grasp(self, position, heightmap_rotation_angle, workspace_limits):
 		# print('Executing: grasp at (%f, %f, %f)' % (position[0], position[1], position[2]))
 		# Compute tool orientation from heightmap rotation angle
@@ -374,11 +388,11 @@ class SimRobot(BaseRobot):
 			grasped_object_handle = self.object_handles[grasped_object_ind]
 			vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
 			if self.check_goal_reached(grasped_object_handle):
-				return State.SUCCESS
+				return Reward.SUCCESS
 			else:
-				return State.WRONG
+				return Reward.WRONG
 		else:
-			return State.FAIL
+			return Reward.FAIL
 
 	def push(self, position, heightmap_rotation_angle, workspace_limits):
 		# print('Executing: push at (%f, %f, %f)' % (position[0], position[1], position[2]))

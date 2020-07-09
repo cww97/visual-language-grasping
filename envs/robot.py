@@ -3,9 +3,9 @@ from abc import abstractmethod
 from enum import Enum
 
 
-class State(Enum):
-    SUCCESS = 0
-    FAIL = 1
+class Reward(Enum):
+    SUCCESS = 1
+    FAIL = 0
     WRONG = -1
 
 
