@@ -42,7 +42,8 @@ class ReplayMemory(object):
 class Trainer(object):
 
 	def __init__(self, future_reward_discount, load_snapshot, snapshot_file):
-		assert torch.cuda.is_available()
+		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+		
 		self.text_data = TextData()
 		vocab, pad_idx = len(self.text_data.text_field.vocab), self.text_data.padding_idx
 
@@ -50,51 +51,41 @@ class Trainer(object):
 		if load_snapshot:  # Load pre-trained model
 			self.model.load_state_dict(torch.load(snapshot_file))
 			print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
-		self.model = self.model.cuda()  # Convert model from CPU to GPU		
+		self.model = self.model.cuda()  # Convert model from CPU to GPU
 		self.model.train()  # Set model to training mode
 
 		self.future_reward_discount = future_reward_discount
-		self.criterion = torch.nn.SmoothL1Loss(reduce=False).cuda()  # Initialize Huber loss
+		self.criterion = torch.nn.SmoothL1Loss(reduction='none').cuda()  # Initialize Huber loss
+
 		# Initialize optimizer
 		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=2e-5)
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
+		self.BATCH_SIZE = 4
+		self.memory = ReplayMemory(256)
 		self.iteration = 0
 
 		# Initialize lists to save execution info and RL variables
-		self.executed_action_log = []
-		self.expected_reward_log = []
-		self.current_reward_log = []
-		self.predicted_value_log = []
+		self.action_log = []
+		self.reward_log = []
 
 	# Pre-load execution info and RL variables
 	def preload(self, transitions_directory):
-		self.executed_action_log = np.loadtxt(os.path.join(transitions_directory, 'executed-action.log.txt'), delimiter=' ')
-		self.iteration = self.executed_action_log.shape[0] - 2
-		self.executed_action_log = self.executed_action_log[0:self.iteration, :]
-		self.executed_action_log = self.executed_action_log.tolist()
-		self.expected_reward_log = np.loadtxt(os.path.join(transitions_directory, 'label-value.log.txt'), delimiter=' ')
-		self.expected_reward_log = self.expected_reward_log[0:self.iteration]
-		self.expected_reward_log.shape = (self.iteration, 1)
-		self.expected_reward_log = self.expected_reward_log.tolist()
-		self.predicted_value_log = np.loadtxt(os.path.join(transitions_directory, 'predicted-value.log.txt'), delimiter=' ')
-		self.predicted_value_log = self.predicted_value_log[0:self.iteration]
-		self.predicted_value_log.shape = (self.iteration, 1)
-		self.predicted_value_log = self.predicted_value_log.tolist()
-		self.current_reward_log = np.loadtxt(os.path.join(transitions_directory, 'reward-value.log.txt'), delimiter=' ')
-		self.current_reward_log = self.current_reward_log[0:self.iteration]
-		self.current_reward_log.shape = (self.iteration, 1)
-		self.current_reward_log = self.current_reward_log.tolist()
+		self.iteration = self.action_log.shape[0] - 2
+		self.action_log = np.loadtxt(os.path.join(transitions_directory, 'action.log.txt'), delimiter=' ')
+		self.action_log = self.action_log[0:self.iteration, :]
+		self.action_log = self.action_log.tolist()
+		self.reward_log = np.loadtxt(os.path.join(transitions_directory, 'reward.log.txt'), delimiter=' ')
+		self.reward_log.shape = (self.iteration, 1)
+		self.reward_log = self.reward_log.tolist()
 
 	# Compute for ward pass through model to compute affordances/Q
 	def forward(self, state, is_volatile=False, specific_rotation=-1):
 		# Pass input data through model
 		output_prob = self.model.forward(state, is_volatile, specific_rotation)
-
+		# import pdb; pdb.set_trace();
 		grasp_pred = self._remove_padding(output_prob[0][0])
 		for rotate_idx in range(1, len(output_prob)):
-			grasp_pred = np.concatenate((grasp_pred,
-				self._remove_padding(output_prob[rotate_idx][0])
-			), axis=0)
+			grasp_pred = np.concatenate((grasp_pred,self._remove_padding(output_prob[rotate_idx][0])), axis=0)
 		return grasp_pred
 
 	def _remove_padding(self, prob):
@@ -119,8 +110,7 @@ class Trainer(object):
 		future_reward = np.max(next_grasp_pred)
 		expected_reward = current_reward + self.future_reward_discount * future_reward
 
-		self.expected_reward_log.append([expected_reward])
-		self.current_reward_log.append([current_reward])
+		self.reward_log.append([current_reward])
 
 		label, label_weights = self._get_label_and_weights(action, expected_reward)
 
@@ -157,39 +147,15 @@ class Trainer(object):
 		label_weights = Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
 		return label, label_weights
 
-	def experience_replay(self, reward_value, logger):
-		# Do sampling for experience replay
-		sample_reward = 0 if reward_value == 1 else 1
-		# Get samples of the same primitive but with different results
-		sample_idxs = np.argwhere(np.asarray(self.current_reward_log)[1:self.iteration, 0] == sample_reward)
-
-		if sample_idxs.size > 0:
-			# Find sample with highest surprise value
-			# TODO
-			sample_surprise_values = np.abs(
-				np.asarray(self.predicted_value_log)[sample_idxs[:, 0]] -
-				np.asarray(self.expected_reward_log)[sample_idxs[:, 0]]
-			)
-			sorted_surprise_idx = np.argsort(sample_surprise_values[:, 0])
-			sorted_sample_idxs = sample_idxs[sorted_surprise_idx, 0]
-			pow_law_exp = 2
-			rand_sample_idxs = int(np.round(np.random.power(pow_law_exp, 1) * (sample_idxs.size - 1)))
-			sample_iteration = sorted_sample_idxs[rand_sample_idxs]
-
-			# Load sample instructiont and RGB-D heightmap
-			sample_instruction = logger.load_instruction(sample_iteration, '0')
-			sample_color_heightmap, sample_depth_heightmap = logger.load_heightmaps(sample_iteration, '0')
-			sample_state = (sample_instruction, sample_color_heightmap, sample_depth_heightmap)
-			next_instruction = logger.load_instruction(sample_iteration+1, '0')
-			next_color_heightmap, next_depth_heightmap = logger.load_heightmaps(sample_iteration+1, '0')
-			next_state = (next_instruction, next_color_heightmap, next_depth_heightmap)
-			# Get labels for sample and back-propagate
-			sample_action = (np.asarray(self.executed_action_log)[sample_iteration, 1:4]).astype(int)
-			self.backprop(sample_state, sample_action, next_state, sample_reward)
-
-			# Recompute prediction value, if sample_action == 'grasp':
-			sample_grasp_pred = self.forward(sample_state, is_volatile=True)
-			self.predicted_value_log[sample_iteration] = [np.max(sample_grasp_pred)]
+	def optimize_model(self):
+		if len(self.memory) < self.BATCH_SIZE: return None
+		transitions = self.memory.sample(self.BATCH_SIZE)
+		# batch = Transition(*zip(*transitions))
+		# import pdb; pdb.set_trace()
+		loss = 0.0
+		for transition in transitions:
+			loss += self.backprop(*transition)
+		return 1.0 * loss / self.BATCH_SIZE
 
 	def get_pred_vis(self, predictions, color_map, best_pix):
 		canvas = None

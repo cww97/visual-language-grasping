@@ -276,7 +276,7 @@ class SimRobot(BaseRobot):
 		shape = np.random.choice(self.mesh_name[self.mesh_list[self.obj_mesh_ind[ind]]])
 		self.target_handle = self.object_handles[ind]
 		self.instruction_str = instruction_template.format(color=color, shape=shape)  # nb
-		self.instruction = self.text_data.get_tensor(self.instruction_str).cuda()
+		self.instruction = self.text_data.get_tensor(self.instruction_str)
 		return self.instruction
 
 	def close_gripper(self, _async=False):

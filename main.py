@@ -31,7 +31,7 @@ class Solver():
 		self.workspace_limits = args.workspace_limits
 		self.heightmap_resolution = args.heightmap_resolution
 		self.env = SimRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits)
-
+		
 		# Initialize trainer
 		self.snapshot_file = args.snapshot_file
 		self.trainer = Trainer(args.future_reward_discount, args.load_snapshot, self.snapshot_file)
@@ -40,7 +40,7 @@ class Solver():
 		self.logger = Logger(args.continue_logging, args.logging_directory)
 		self.logger.save_camera_info(self.env.cam_intrinsics, self.env.cam_pose, self.env.cam_depth_scale)
 		self.logger.save_heightmap_info(args.workspace_limits, self.heightmap_resolution)
-
+		
 		# Find last executed iteration of pre-loaded log, and load execution info and RL variables
 		if args.continue_logging:
 			self.trainer.preload(self.logger.transitions_directory)
@@ -56,10 +56,6 @@ class Solver():
 		# Get pixel location and rotation with highest affordance
 		best_pix = np.unravel_index(np.argmax(grasp_pred), grasp_pred.shape)
 		predicted_value = np.max(grasp_pred)
-
-		# Save predicted confidence value
-		self.trainer.predicted_value_log.append([predicted_value])
-		self.logger.write_to_log('predicted-value', self.trainer.predicted_value_log)
 
 		# Visualize executed primitive, and affordances
 		if self.save_visualizations:
@@ -78,13 +74,16 @@ class Solver():
 			best_pix_y * self.heightmap_resolution + self.workspace_limits[1][0],
 			self.valid_depth_heightmap[best_pix_y][best_pix_x] + self.workspace_limits[2][0]
 		]
-		self.trainer.executed_action_log.append([1, best_pix[0], best_pix[1], best_pix[2]])  # 1 - grasp
-		self.logger.write_to_log('executed-action', self.trainer.executed_action_log)
+		self.trainer.action_log.append([1, best_pix[0], best_pix[1], best_pix[2]])  # 1 - grasp
+		self.logger.write_to_log('action', self.trainer.action_log)
 		return best_rotation_angle, primitive_position
 
 	def main(self):
+		optim_thread = threading.Thread(target=self._optimize_model)
+		optim_thread.daemon = True
+		optim_thread.start()
+
 		for epoch in count():  # Start main training loop
-			print()
 			self.env.reset()
 			# print('instruction: %s' % (self.env.instruction_str))
 			self.no_change_cnt = 0
@@ -96,22 +95,26 @@ class Solver():
 				action = self._get_best_pix(grasp_pred)
 				angle, position = self._get_action_data(action)
 				reward, done = self.env.step(position, angle, self.workspace_limits)
-
-				# observe new state
-				next_state = State(self.env.instruction, *self._get_imgs())
-
-				# optimize model
-				loss_value = self.trainer.backprop(state, action, next_state, reward)
-				# self.trainer.experience_replay(reward, self.logger)
-				self._log_board_save(reward, loss_value)
+				next_state = State(self.env.instruction, *self._get_imgs())  # observe new state
+				self.trainer.memory.push(state, action, next_state, reward)
 
 				state = next_state
-				time_1 = time.time()
-				print('Iteration: %d, reward = %d, Time: %f' % (self.trainer.iteration, reward, (time_1 - time_0)))
+				self._log_board_save(reward)
+				print('Iter: %d, Reward = %d, Time: %f' % (self.trainer.iteration, reward, (time.time() - time_0)))
 				self.trainer.iteration += 1
 
 				self._detect_changes(next_state.depth_data, state.depth_data, reward)
 				if done or self._check_stupid() or (not self.env.is_stable()): break
+			# import pdb; pdb.set_trace()
+
+	def _optimize_model(self):
+		while True:
+			if self.trainer.iteration % self.trainer.BATCH_SIZE == 0:
+				loss = self.trainer.optimize_model()
+				if loss == None: continue
+				self.writer.add_scalar('VLG/loss', loss, self.trainer.iteration)
+				print("model updated, loss = %.4f" % (loss))
+			time.sleep(1)
 
 	def _get_imgs(self):
 		# Get latest RGB-D image
@@ -201,16 +204,12 @@ class Solver():
 		else:
 			self.no_change_cnt += 1
 
-	def _log_board_save(self, reward, loss_value):
+	def _log_board_save(self, reward):
 		'''
 		$ tensorboard --host 0.0.0.0 --logdir runs
 		'''
-		self.logger.write_to_log('expected-reward', self.trainer.expected_reward_log)
-		self.logger.write_to_log('current-reward', self.trainer.current_reward_log)
-
-		# record on tensorboard
+		self.logger.write_to_log('reward', self.trainer.reward_log)
 		self.writer.add_scalar('VLG/reward', reward, self.trainer.iteration)
-		self.writer.add_scalar('VLG/loss', loss_value, self.trainer.iteration)
 
 		# Save model snapshot
 		self.logger.save_backup_model(self.trainer.model, 'reinforcement')
