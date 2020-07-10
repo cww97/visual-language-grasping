@@ -13,8 +13,10 @@ from models import reinforcement_net
 from utils import CrossEntropyLoss2d
 from collections import namedtuple
 import random
+import math
 
-State = namedtuple('State', ('instruction', 'color_data', 'depth_data'))
+State = namedtuple('State', ('instruction', 'color_map', 'depth_map'))
+Action = namedtuple('Action', ('r', 'x', 'y'))
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
 
@@ -47,20 +49,22 @@ class Trainer(object):
 		self.text_data = TextData()
 		vocab, pad_idx = len(self.text_data.text_field.vocab), self.text_data.padding_idx
 
-		self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx)  # 'reinforcement'
+		self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
 		if load_snapshot:  # Load pre-trained model
 			self.model.load_state_dict(torch.load(snapshot_file))
 			print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
-		self.model = self.model.cuda()  # Convert model from CPU to GPU
 		self.model.train()  # Set model to training mode
+		self.target_net = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
+		self.target_net.load_state_dict(self.model.state_dict())
+		self.target_net.eval()
 
 		self.future_reward_discount = future_reward_discount
 		self.criterion = torch.nn.SmoothL1Loss(reduction='none').cuda()  # Initialize Huber loss
 
 		# Initialize optimizer
-		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=2e-5)
+		self.optimizer = torch.optim.Adam(self.model.parameters())
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
-		self.BATCH_SIZE = 4
+		self.BATCH_SIZE = 16
 		self.memory = ReplayMemory(256)
 		self.iteration = 0
 
@@ -78,74 +82,28 @@ class Trainer(object):
 		self.reward_log.shape = (self.iteration, 1)
 		self.reward_log = self.reward_log.tolist()
 
-	# Compute for ward pass through model to compute affordances/Q
-	def forward(self, state, is_volatile=False, specific_rotation=-1):
-		# Pass input data through model
-		output_prob = self.model.forward(state, is_volatile, specific_rotation)
-		# import pdb; pdb.set_trace();
-		grasp_pred = self._remove_padding(output_prob[0][0])
-		for rotate_idx in range(1, len(output_prob)):
-			grasp_pred = np.concatenate((grasp_pred,self._remove_padding(output_prob[rotate_idx][0])), axis=0)
-		return grasp_pred
+	def _get_eps_threshold(self, EPS_START=0.9, EPS_END=0.05, EPS_DECAY=200):
+		return EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.iteration / EPS_DECAY)
 
-	def _remove_padding(self, prob):
-		padding_width, full_width = self.widths
-		prob = prob.cpu().data.numpy()
-		pred = prob[:, 0,
-			(padding_width // 2): (full_width // 2 - padding_width // 2),
-			(padding_width // 2): (full_width // 2 - padding_width // 2)
-		]
-		return pred
+	def select_action(self, state, is_volatile=False, specific_rotation=-1, logger=None):
+		sample = random.random()
+		eps_threshold = self._get_eps_threshold()
+		self.iteration += 1
+		if sample > eps_threshold:
+			with torch.no_grad():
+				grasp_pred = self.model(state, is_volatile, specific_rotation).cpu().data.numpy()
+				action = np.unravel_index(np.argmax(grasp_pred), grasp_pred.shape)
+			if logger:
+				grasp_pred_vis = self.get_pred_vis(grasp_pred, state.color_map, action)
+				logger.save_visualizations(self.iteration, grasp_pred_vis, 'grasp')
+		else:
+			# random a obj's position, goto env for more info
+			action = np.array([0, 111, 111])
 
-	# Compute labels and back-propagate
-	def backprop(self, state, action, next_state, current_reward):
-		'''
-		a Transition
-		state: (pre_instruction, prev_color_map, prev_depth_map)
-		action: best_pixcel_idx (rotate_idx, x, y)
-		next_state:
-		rerward:
-		'''
-		next_grasp_pred = self.forward(next_state, is_volatile=True)
-		future_reward = np.max(next_grasp_pred)
-		expected_reward = current_reward + self.future_reward_discount * future_reward
-
-		self.reward_log.append([current_reward])
-
-		label, label_weights = self._get_label_and_weights(action, expected_reward)
-
-		# Compute loss and backward pass
-		self.optimizer.zero_grad()
-		loss_value = 0
-		# Do for-ward pass with specified rotation (to save gradients)
-		loss_value += self._backward_loss(state, action[0], label, label_weights)
-		# Since grasping is symmetric, train with another for-ward pass of opposite rotation angle
-		opposite_rotate_idx = (action[0] + self.model.num_rotations / 2) % self.model.num_rotations
-		loss_value += self._backward_loss(state, opposite_rotate_idx, label, label_weights)
-		loss_value /= 2
-
-		# print('Training loss: %f' % (loss_value))
-		self.optimizer.step()
-		return loss_value
-
-	def _backward_loss(self, state, rotate_idx, label, label_weights=None):
-		_ = self.forward(state, False, rotate_idx)
-		output = self.model.output_prob[0][0].view(1, 320, 320)
-		loss = (self.criterion(output, label) * label_weights)
-		loss = loss.sum()
-		loss.backward()
-		return loss.cpu().data.numpy()
-
-	def _get_label_and_weights(self, best_pix_ind, expected_reward):
-		# Compute label
-		label = np.zeros((1, 320, 320))
-		label[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = expected_reward
-		label = Variable(torch.from_numpy(label).float().cuda())
-		# Compute label mask
-		label_weights = np.zeros(label.shape)  # Compute label mask
-		label_weights[0, 48 + best_pix_ind[1], 48 + best_pix_ind[2]] = 1
-		label_weights = Variable(torch.from_numpy(label_weights).float().cuda(), requires_grad=False)
-		return label, label_weights
+		if logger:
+			self.action_log.append([1, action[0], action[1], action[2]])
+			logger.write_to_log('action', self.action_log)
+		return action
 
 	def optimize_model(self):
 		if len(self.memory) < self.BATCH_SIZE: return None
@@ -155,7 +113,35 @@ class Trainer(object):
 		loss = 0.0
 		for transition in transitions:
 			loss += self.backprop(*transition)
-		return 1.0 * loss / self.BATCH_SIZE
+		loss /= self.BATCH_SIZE
+		print("model updated, loss = %.4f" % (loss))
+		return loss
+
+	# Compute labels and back-propagate
+	def backprop(self, state, action, next_state, reward):
+		next_grasp_pred = self.target_net(next_state, is_volatile=True)
+		# import pdb; pdb.set_trace()
+		future_reward = torch.max(next_grasp_pred)
+		expected_reward = reward + self.future_reward_discount * future_reward
+
+		# Compute loss and backward pass
+		self.optimizer.zero_grad()
+		loss_value = 0
+		# Do for-ward pass with specified rotation (to save gradients)
+		loss_value += self._backward_loss(state, action[0], expected_reward)
+		opposite_rotate_idx = (action[0] + self.model.num_rotations / 2) % self.model.num_rotations
+		loss_value += self._backward_loss(state, opposite_rotate_idx, expected_reward)
+		loss_value /= 2
+
+		self.optimizer.step()
+		return loss_value
+
+	def _backward_loss(self, state, rotate_idx, expected_rewards):
+		state_action_values = torch.max(self.model(state, False, rotate_idx))
+		loss = self.criterion(state_action_values, expected_rewards)
+		loss = loss.sum()
+		loss.backward()
+		return loss.cpu().data.numpy()
 
 	def get_pred_vis(self, predictions, color_map, best_pix):
 		canvas = None
@@ -176,7 +162,7 @@ class Trainer(object):
 				
 				background_image = ndimage.rotate(color_map, r_angle, reshape=False, order=0)
 				background_image = cv2.cvtColor(background_image, cv2.COLOR_RGB2BGR)
-				
+
 				pred_vis = (0.5 * background_image + 0.5 * pred_vis).astype(np.uint8)
 
 				if tmp_row_canvas is None: tmp_row_canvas = pred_vis

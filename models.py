@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import torchvision
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from scipy import ndimage
 
 
 class EncoderLSTM(nn.Module):
@@ -16,9 +17,8 @@ class EncoderLSTM(nn.Module):
 		Encodes navigation instructions, returning hidden state context (for
 		attention methods) and a decoder initial state. '''
 
-	def __init__(self, vocab_size, padding_idx,
-					embedding_size=256, hidden_size=512,
-					dropout_ratio=0.5, bidirectional=False, num_layers=1):
+	def __init__(self, vocab_size, padding_idx, embedding_size=256, hidden_size=512,
+				 dropout_ratio=0.5, bidirectional=False, num_layers=1):
 		super(EncoderLSTM, self).__init__()
 		self.embedding_size = embedding_size
 		self.hidden_size = hidden_size
@@ -139,33 +139,25 @@ class reinforcement_net(nn.Module):
 					m[1].weight.data.fill_(1)
 					m[1].bias.data.zero_()
 
-		# print('')
-		# Initialize output variable (for backprop)
-		self.interm_feat = []
-		self.output_prob = []
-
 	def forward(self, state, is_volatile=False, specific_rotation=-1):
 		"""
 		is_volatile: true for each rotation, false for specific_rotation
 		use is_volatile=false in backward
 		"""
-		instruction, input_color_data, input_depth_data = state
-		text_feature, _, _ = self.text_encoder(instruction.cuda(), instruction.size()[1:])  # .detach()
+		instruction, color_map, depth_map = state
+		text_feature, _, _ = self.text_encoder(instruction.cuda(), instruction.size()[1:])
 		text_feature = text_feature[:, -1, :]  # (1, d)
 
-		if is_volatile:  # try every rotate angle
+		color_data, depth_data = self._preprocess_img(color_map, depth_map)
+		if is_volatile:
 			rotations = range(self.num_rotations)
 			torch.set_grad_enabled(False)
-			output_prob = []
 		else:
 			rotations = [specific_rotation]
-			output_prob = self.output_prob = []
-
-		# Apply rotations to images
-		# attens = []
+		output_prob = []
 		for rotate_idx in rotations:
 			rotate_theta = np.radians(rotate_idx * (360 / self.num_rotations))
-			rotate_color, rotate_depth = self._rotate(rotate_theta, input_color_data, input_depth_data)
+			rotate_color, rotate_depth = self._rotate(rotate_theta, color_data, depth_data)
 
 			# Compute intermediate features, use pretrained densenet
 			interm_grasp_color_feat = self.grasp_color_trunk.features(rotate_color)
@@ -180,13 +172,65 @@ class reinforcement_net(nn.Module):
 			# Forward pass through branches, undo rotation on output predictions, upsample results
 			grasp_feat = self.graspnet(interm_grasp_feat)
 			grasp_feat = self.unsample.forward(F.grid_sample(grasp_feat, flow_grid_after, mode='nearest'))
-			# import pdb; pdb.set_trace()
-			output_prob.append([grasp_feat])
+			output_prob.append(self._remove_padding(grasp_feat))
 
 		# import pdb; pdb.set_trace()
 		if is_volatile: torch.set_grad_enabled(True)
-		# output_prob = torch.Tensor(output_prob)
-		return output_prob
+		return torch.cat(output_prob)
+
+	def _preprocess_img(self, color_heightmap, depth_heightmap):
+		# Apply 2x scale to input heightmaps
+		color_heightmap_2x = ndimage.zoom(color_heightmap, zoom=[2, 2, 1], order=0)
+		depth_heightmap_2x = ndimage.zoom(depth_heightmap, zoom=[2, 2], order=0)
+
+		# Add extra padding (to handle rotations inside network)
+		diag_length = float(color_heightmap_2x.shape[0]) * np.sqrt(2)
+		diag_length = np.ceil(diag_length / 32) * 32
+		padding_width = int((diag_length - color_heightmap_2x.shape[0]) / 2)
+		color_heightmap_2x_r = np.pad(color_heightmap_2x[:, :, 0], padding_width, 'constant', constant_values=0)
+		color_heightmap_2x_r.shape = (color_heightmap_2x_r.shape[0], color_heightmap_2x_r.shape[1], 1)
+		color_heightmap_2x_g = np.pad(color_heightmap_2x[:, :, 1], padding_width, 'constant', constant_values=0)
+		color_heightmap_2x_g.shape = (color_heightmap_2x_g.shape[0], color_heightmap_2x_g.shape[1], 1)
+		color_heightmap_2x_b = np.pad(color_heightmap_2x[:, :, 2], padding_width, 'constant', constant_values=0)
+		color_heightmap_2x_b.shape = (color_heightmap_2x_b.shape[0], color_heightmap_2x_b.shape[1], 1)
+		color_heightmap_2x = np.concatenate((color_heightmap_2x_r, color_heightmap_2x_g, color_heightmap_2x_b), axis=2)
+		depth_heightmap_2x = np.pad(depth_heightmap_2x, padding_width, 'constant', constant_values=0)
+		# import cv2; cv2.imwrite('rua_padding.png', color_heightmap_2x)
+
+		# Pre-process color image (scale and normalize)
+		image_mean = [0.485, 0.456, 0.406]
+		image_std = [0.229, 0.224, 0.225]
+		input_color_image = color_heightmap_2x.astype(float) / 255
+		for c in range(3):
+			input_color_image[:, :, c] = (input_color_image[:, :, c] - image_mean[c]) / image_std[c]
+
+		# Pre-process depth image (normalize)
+		image_mean = [0.01, 0.01, 0.01]
+		image_std = [0.03, 0.03, 0.03]
+		depth_heightmap_2x.shape = (depth_heightmap_2x.shape[0], depth_heightmap_2x.shape[1], 1)
+		input_depth_image = np.concatenate((depth_heightmap_2x, depth_heightmap_2x, depth_heightmap_2x), axis=2)
+		for c in range(3):
+			input_depth_image[:, :, c] = (input_depth_image[:, :, c] - image_mean[c]) / image_std[c]
+
+		# Construct minibatch of size 1 (b,c,h,w)
+		_shape = input_color_image.shape
+		input_color_image.shape = (_shape[0], _shape[1], _shape[2], 1)
+		input_depth_image.shape = (_shape[0], _shape[1], _shape[2], 1)
+
+		self.widths = (padding_width, color_heightmap_2x.shape[0])
+		color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
+		depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
+		return color_data, depth_data
+
+	def _remove_padding(self, prob):
+		padding_width, full_width = self.widths
+		# prob = prob.cpu().data.numpy()
+		pred = prob[:, 0,
+			(padding_width // 2): (full_width // 2 - padding_width // 2),
+			(padding_width // 2): (full_width // 2 - padding_width // 2)
+		]
+		# import pdb; pdb.set_trace()
+		return pred
 
 	def _rotate(self, rotate_theta, input_color_data, input_depth_data):
 		# Compute sample grid for rotation BEFORE neural network

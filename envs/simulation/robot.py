@@ -125,6 +125,7 @@ class SimRobot(BaseRobot):
 			if ret_resp == 8:
 				print('Failed to add new objects to simulation. Please restart.')
 				exit()
+			print(ret_ints, ret_ints[0])
 			curr_shape_handle = ret_ints[0]
 			self.object_handles.append(curr_shape_handle)
 			time.sleep(2)
@@ -323,20 +324,30 @@ class SimRobot(BaseRobot):
 
 	# Primitives ----------------------------------------------------------
 
-	def step(self, *args):
-		reward = self.grasp(*args)
+	def step(self, action, valid_depth_heightmap, num_rotations, heightmap_resolution):
+		# Compute 3D position of pixel
+		angle = np.deg2rad(action[0] * (360.0 / num_rotations))
+		best_pix_x = action[2]
+		best_pix_y = action[1]
+		primitive_position = [
+			best_pix_x * heightmap_resolution + self.workspace_limits[0][0], 
+			best_pix_y * heightmap_resolution + self.workspace_limits[1][0],
+			valid_depth_heightmap[best_pix_y][best_pix_x] + self.workspace_limits[2][0]
+		]
+
+		reward = self.grasp(primitive_position, angle)
 		done = (reward == Reward.SUCCESS)
 		# print(reward, done)
 		return reward.value, done
 
-	def grasp(self, position, heightmap_rotation_angle, workspace_limits):
+	def grasp(self, position, heightmap_rotation_angle):
 		# print('Executing: grasp at (%f, %f, %f)' % (position[0], position[1], position[2]))
 		# Compute tool orientation from heightmap rotation angle
 		tool_rotation_angle = (heightmap_rotation_angle % np.pi) - np.pi / 2
 
 		# Avoid collision with floor
 		position = np.asarray(position).copy()
-		position[2] = max(position[2] - 0.04, workspace_limits[2][0] + 0.02)
+		position[2] = max(position[2] - 0.04, self.workspace_limits[2][0] + 0.02)
 
 		# Move gripper to location above grasp target
 		grasp_location_margin = 0.15

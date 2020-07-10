@@ -5,7 +5,7 @@ from enum import Enum
 
 class Reward(Enum):
     SUCCESS = 1
-    FAIL = 0
+    FAIL = -1
     WRONG = -1
 
 
