@@ -64,7 +64,7 @@ class Trainer(object):
 		# Initialize optimizer
 		self.optimizer = torch.optim.Adam(self.model.parameters())
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
-		self.BATCH_SIZE = 16
+		self.BATCH_SIZE = 8
 		self.memory = ReplayMemory(256)
 		self.iteration = 0
 
@@ -85,7 +85,7 @@ class Trainer(object):
 	def _get_eps_threshold(self, EPS_START=0.9, EPS_END=0.05, EPS_DECAY=200):
 		return EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.iteration / EPS_DECAY)
 
-	def select_action(self, state, is_volatile=False, specific_rotation=-1, logger=None):
+	def select_action(self, state, is_volatile=False, specific_rotation=-1, env=None, logger=None):
 		sample = random.random()
 		eps_threshold = self._get_eps_threshold()
 		self.iteration += 1
@@ -97,8 +97,7 @@ class Trainer(object):
 				grasp_pred_vis = self.get_pred_vis(grasp_pred, state.color_map, action)
 				logger.save_visualizations(self.iteration, grasp_pred_vis, 'grasp')
 		else:
-			# random a obj's position, goto env for more info
-			action = np.array([0, 111, 111])
+			action = env.random_grasp_action()
 
 		if logger:
 			self.action_log.append([1, action[0], action[1], action[2]])

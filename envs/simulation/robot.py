@@ -9,11 +9,13 @@ from . import vrep
 from ..robot import Robot as BaseRobot
 from ..robot import Reward
 from ..data import Data as TextData
+import random
+from bisect import bisect_right
 
 
 class SimRobot(BaseRobot):
-	def __init__(self, obj_mesh_dir, num_obj, workspace_limits):
-		BaseRobot.__init__(self, workspace_limits)
+	def __init__(self, obj_mesh_dir, num_obj, *args):
+		BaseRobot.__init__(self, *args)
 		self.text_data = TextData()
 
 		# Define colors for object meshes (Tableau palette)
@@ -68,10 +70,12 @@ class SimRobot(BaseRobot):
 		else:
 			print('Connected to simulation.')
 			# self.restart_sim()
+		self.MODE = vrep.simx_opmode_blocking 
 
 		# Setup virtual camera in simulation
 		self.setup_sim_camera()
 		self.object_handles = []
+		self.object_left_handles = []
 		self.target_handle = None
 
 		# Add objects to simulation environment
@@ -82,7 +86,7 @@ class SimRobot(BaseRobot):
 		# Get handle to camera
 		sim_ret, self.cam_handle = vrep.simxGetObjectHandle(self.sim_client, 'Vision_sensor_persp', vrep.simx_opmode_blocking)
 
-		# Get camera pose and intrinsics in simulation
+		# Get camera pose and intrinsics in simulationo
 		sim_ret, cam_position = vrep.simxGetObjectPosition(self.sim_client, self.cam_handle, -1, vrep.simx_opmode_blocking)
 		sim_ret, cam_orientation = vrep.simxGetObjectOrientation(self.sim_client, self.cam_handle, -1, vrep.simx_opmode_blocking)
 		cam_trans = np.eye(4, 4)
@@ -125,10 +129,11 @@ class SimRobot(BaseRobot):
 			if ret_resp == 8:
 				print('Failed to add new objects to simulation. Please restart.')
 				exit()
-			print(ret_ints, ret_ints[0])
+			# print(ret_ints, ret_ints[0])
 			curr_shape_handle = ret_ints[0]
 			self.object_handles.append(curr_shape_handle)
 			time.sleep(2)
+		self.object_left_handles = self.object_handles.copy()
 		self.prev_obj_positions = []
 		self.obj_positions = []
 		self.get_instruction()  # nb
@@ -150,8 +155,7 @@ class SimRobot(BaseRobot):
 
 	def is_stable(self):
 		# Check if simulation is stable by checking if gripper is within workspace
-		sim_ret, gripper_position = vrep.simxGetObjectPosition(self.sim_client, self.RG2_tip_handle, -1,
-															   vrep.simx_opmode_blocking)
+		sim_ret, gripper_position = vrep.simxGetObjectPosition(self.sim_client, self.RG2_tip_handle, -1, vrep.simx_opmode_blocking)
 		sim_is_ok = gripper_position[0] > self.workspace_limits[0][0] - 0.1 and \
 					gripper_position[0] < self.workspace_limits[0][1] + 0.1 and \
 					gripper_position[1] > self.workspace_limits[1][0] - 0.1 and \
@@ -166,7 +170,7 @@ class SimRobot(BaseRobot):
 		self.restart_sim()
 		self.add_objects()
 
-	# def stop_sim(self):
+	# def stop_sim(self):objects/blocks
 	#     if self.is_sim:
 	#         # Now send some data to V-REP in a non-blocking fashion:
 	#         # vrep.simxAddStatusbarMessage(sim_client,'Hello V-REP!',vrep.simx_opmode_oneshot)
@@ -229,7 +233,6 @@ class SimRobot(BaseRobot):
 		return obj_positions, obj_orientations
 
 	def reposition_objects(self, workspace_limits):
-
 		# Move gripper out of the way
 		self.move_to([-0.1, 0, 0.3], None)
 		# sim_ret, UR5_target_handle = vrep.simxGetObjectHandle(self.sim_client,'UR5_target',vrep.simx_opmode_blocking)
@@ -324,6 +327,34 @@ class SimRobot(BaseRobot):
 
 	# Primitives ----------------------------------------------------------
 
+	def random_grasp_action(self):
+		'''
+		angles = []
+		for i in range(8):
+			angle = np.deg2rad(i * (360.0 / 16))
+			tool_rotation_angle = (angle % np.pi) - np.pi / 2
+			angles.append(tool_rotation_angle)
+		print(angles)
+		'''
+		# assert len(self.object_left_handles) > 0
+		object_handle = random.sample(self.object_left_handles, 1)[0]
+		
+		_, orientation = vrep.simxGetObjectOrientation(self.sim_client, object_handle, -1, self.MODE)
+		all_angles = [-1.5708, -1.1781, -0.7854, -0.3927, 0.0, 0.3927, 0.7854, 1.1781]
+		possible_angles = [orientation[1], orientation[1] - np.pi/2.0]
+		anegle = random.sample(possible_angles, 1)[0]
+		angle = max(0, bisect_right(all_angles, orientation[1]) - 1)
+		
+		_, position = vrep.simxGetObjectPosition(self.sim_client, object_handle, -1, self.MODE)
+		action_x = (position[1] - self.workspace_limits[1][0]) / self.heightmap_resolution
+		action_y = (position[0] - self.workspace_limits[0][0]) / self.heightmap_resolution
+		action_x = min(action_x, 223)
+		action_y = min(action_y, 223)
+		action = (angle, int(action_x), int(action_y))
+		# print(object_handle, action)
+		# import pdb; pdb.set_trace()
+		return action
+	
 	def step(self, action, valid_depth_heightmap, num_rotations, heightmap_resolution):
 		# Compute 3D position of pixel
 		angle = np.deg2rad(action[0] * (360.0 / num_rotations))
@@ -360,6 +391,8 @@ class SimRobot(BaseRobot):
 		move_direction = np.asarray([tool_position[0] - UR5_target_position[0], tool_position[1] - UR5_target_position[1], tool_position[2] - UR5_target_position[2]])
 		move_magnitude = np.linalg.norm(move_direction)
 		move_step = 0.05 * move_direction / move_magnitude
+		if np.floor(move_direction[0] / move_step[0]) == np.nan or move_step[0] == 0:
+			import pdb; pdb.set_trace() 
 		num_move_steps = int(np.floor(move_direction[0] / move_step[0]))
 
 		# Compute gripper orientation and rotation increments
@@ -392,13 +425,13 @@ class SimRobot(BaseRobot):
 
 		# Move the grasped object elsewhere
 		if grasp_sth:
-			# import pdb; pdb.set_trace()
 			object_positions = np.asarray(self.get_obj_positions())
 			object_positions = object_positions[:, 2]
 			grasped_object_ind = np.argmax(object_positions)
 			grasped_object_handle = self.object_handles[grasped_object_ind]
-			vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), vrep.simx_opmode_blocking)
-			if self.check_goal_reached(grasped_object_handle):
+			vrep.simxSetObjectPosition(self.sim_client, grasped_object_handle, -1, (-0.5, 0.5 + 0.05 * float(grasped_object_ind), 0.1), self.MODE)
+			self.object_left_handles.remove(grasped_object_handle)
+			if grasped_object_handle == self.target_handle:
 				return Reward.SUCCESS
 			else:
 				return Reward.WRONG
@@ -496,80 +529,3 @@ class SimRobot(BaseRobot):
 
 	#    # Move gripper to location above place target
 	#    self.move_to(location_above_place_target, None)
-
-
-class TestRobot(SimRobot):
-	def __init__(self, obj_mesh_dir, num_obj, workspace_limits, test_preset_file):
-
-		BaseRobot.__init__(workspace_limits)
-		# Read files in object mesh directory
-		self.obj_mesh_dir = obj_mesh_dir
-		self.num_obj = num_obj
-		self.mesh_list = os.listdir(self.obj_mesh_dir)
-
-		# Make sure to have the server side running in V-REP:
-		# in a child script of a V-REP scene, add following command
-		# to be executed just once, at simulation start:
-		#
-		# simExtRemoteApiStart(19999)
-		#
-		# then start simulation, and run this program.
-		#
-		# IMPORTANT: for each successful call to simxStart, there
-		# should be a corresponding call to simxFinish at the end!
-
-		# MODIFY remoteApiConnections.txt
-
-		# Connect to simulator
-		vrep.simxFinish(-1)  # Just in case, close all opened connections
-		# Connect to V-REP on port 19997
-		self.sim_client = vrep.simxStart('127.0.0.1', 19997, True, True, 5000, 5)
-		if self.sim_client == -1:
-			print('Failed to connect to simulation (V-REP remote API server). Exiting.')
-			exit()
-		else:
-			print('Connected to simulation.')
-			self.restart_sim()
-
-		# Setup virtual camera in simulation
-		self.setup_sim_camera()
-		self.object_handles = []
-
-		# If testing, read object meshes and poses from test case file
-		file = open(test_preset_file, 'r')
-		file_content = file.readlines()
-		self.test_obj_mesh_files = []
-		self.test_obj_mesh_colors = []
-		self.test_obj_positions = []
-		self.test_obj_orientations = []
-		for object_idx in range(self.num_obj):
-			file_content_curr_object = file_content[object_idx].split()
-			self.test_obj_mesh_files.append(os.path.join(self.obj_mesh_dir, file_content_curr_object[0]))
-			self.test_obj_mesh_colors.append([float(file_content_curr_object[1]), float(file_content_curr_object[2]), float(file_content_curr_object[3])])
-			self.test_obj_positions.append([float(file_content_curr_object[4]), float(file_content_curr_object[5]), float(file_content_curr_object[6])])
-			self.test_obj_orientations.append([float(file_content_curr_object[7]), float(file_content_curr_object[8]), float(file_content_curr_object[9])])
-		file.close()
-		self.obj_mesh_color = np.asarray(self.test_obj_mesh_colors)
-
-		# Add objects to simulation environment
-		self.add_objects()
-
-	def add_objects(self):
-
-		# Add each object to robot workspace at x,y location and orientation (random or pre-loaded)
-		self.object_handles = []
-		for object_idx in range(len(self.obj_mesh_ind)):
-			curr_mesh_file = self.test_obj_mesh_files[object_idx]
-			curr_shape_name = 'shape_%02d' % object_idx
-			object_position = [self.test_obj_positions[object_idx][0], self.test_obj_positions[object_idx][1], self.test_obj_positions[object_idx][2]]
-			object_orientation = [self.test_obj_orientations[object_idx][0], self.test_obj_orientations[object_idx][1], self.test_obj_orientations[object_idx][2]]
-			object_color = [self.obj_mesh_color[object_idx][0], self.obj_mesh_color[object_idx][1], self.obj_mesh_color[object_idx][2]]
-			ret_resp, ret_ints, ret_floats, ret_strings, ret_buffer = vrep.simxCallScriptFunction(self.sim_client, 'remoteApiCommandServer', vrep.sim_scripttype_childscript, 'importShape', [0, 0, 255, 0], object_position + object_orientation + object_color, [curr_mesh_file, curr_shape_name], bytearray(), vrep.simx_opmode_blocking)
-			if ret_resp == 8:
-				print('Failed to add new objects to simulation. Please restart.')
-				exit()
-			curr_shape_handle = ret_ints[0]
-			self.object_handles.append(curr_shape_handle)
-
-		self.prev_obj_positions = []
-		self.obj_positions = []

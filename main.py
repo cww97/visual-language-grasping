@@ -10,7 +10,6 @@ from logger import Logger
 import utils
 from envs.real.robot import RealRobot
 from envs.simulation.robot import SimRobot
-from envs.simulation.robot import TestRobot
 from utils.config import Config
 from tensorboardX import SummaryWriter
 from envs.robot import Reward
@@ -30,7 +29,7 @@ class Solver():
 		# Initialize pick-and-place system (camera and robot)
 		self.workspace_limits = args.workspace_limits
 		self.heightmap_resolution = args.heightmap_resolution
-		self.env = SimRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits)
+		self.env = SimRobot(args.obj_mesh_dir, args.num_obj, args.workspace_limits, args.heightmap_resolution)
 		
 		# Initialize trainer
 		self.snapshot_file = args.snapshot_file
@@ -45,9 +44,9 @@ class Solver():
 			self.trainer.preload(self.logger.transitions_directory)
 
 	def main(self):
-		optim_thread = threading.Thread(target=self._optimize_model)
-		optim_thread.daemon = True
-		optim_thread.start()
+		# optim_thread = threading.Thread(target=self._optimize_model)
+		# optim_thread.daemon = True
+		# optim_thread.start()
 
 		for epoch in count():  # Start main training loop
 			self.env.reset()
@@ -56,7 +55,7 @@ class Solver():
 			state = State(self.env.instruction, *self._get_imgs())
 			for t in count():
 				time_0 = time.time()
-				action = self.trainer.select_action(state, is_volatile=True, logger=self.logger)
+				action = self.trainer.select_action(state, is_volatile=True, env=self.env, logger=self.logger)
 				reward, done = self.env.step(action, state.depth_map, *self.env_step_args)
 				next_state = State(self.env.instruction, *self._get_imgs())  # observe new state
 				self.trainer.memory.push(state, action, next_state, reward)
@@ -66,7 +65,11 @@ class Solver():
 				self._detect_changes(next_state.depth_map, state.depth_map, reward)
 				if done or self._check_stupid() or (not self.env.is_stable()):
 					break
-			# self.trainer.optimize_model()
+			loss = self.trainer.optimize_model()
+			if loss:
+				self.writer.add_scalar('VLG/loss', loss, self.trainer.iteration)
+			if epoch % 5 == 0:
+				self.trainer.target_net.load_state_dict(self.trainer.model.state_dict())
 
 	def _optimize_model(self):
 		TARGET_UPDATE = 5
@@ -101,7 +104,7 @@ class Solver():
 	def _check_stupid(self):
 		if self.no_change_cnt > 10:
 			self.no_change_cnt = 0
-			print('no change for a long time, Reset.')
+			# print('no change for a long time, Reset.')
 			return True
 		return False
 
@@ -134,7 +137,7 @@ class Solver():
 		if self.trainer.iteration % 50 == 0:
 			self.logger.save_model(self.trainer.iteration, self.trainer.model, 'reinforcement')
 			self.trainer.model = self.trainer.model.cuda()
-		print('Iter: %d, Reward = %d, Time: %f' % (self.trainer.iteration, reward, (time.time() - time_0)))
+		print('Iter: %d, Reward = %d, Time: %.2f' % (self.trainer.iteration, reward, (time.time() - time_0)))
 
 
 if __name__ == '__main__':
@@ -144,6 +147,15 @@ if __name__ == '__main__':
 	# Run main program with specified config file
 	parser.add_argument('-f', '--file', dest='file')
 	args = parser.parse_args()
-
 	solver = Solver(Config(args.file))
+	'''
+	angles = []
+	for i in range(8):
+		angle = np.deg2rad(i * (360.0 / 16))
+		tool_rotation_angle = (angle % np.pi) - np.pi / 2
+		angles.append(tool_rotation_angle)
+	solver.env.reset()
+	solver.env.random_grasp_action()
+	assert False
+	'''
 	solver.main()
