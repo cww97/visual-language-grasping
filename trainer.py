@@ -64,7 +64,7 @@ class Trainer(object):
 		# Initialize optimizer
 		self.optimizer = torch.optim.Adam(self.model.parameters())
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
-		self.BATCH_SIZE = 8
+		self.BATCH_SIZE = 2
 		self.memory = ReplayMemory(256)
 		self.iteration = 0
 
@@ -85,13 +85,13 @@ class Trainer(object):
 	def _get_eps_threshold(self, EPS_START=0.9, EPS_END=0.05, EPS_DECAY=200):
 		return EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.iteration / EPS_DECAY)
 
-	def select_action(self, state, is_volatile=False, specific_rotation=-1, env=None, logger=None):
+	def select_action(self, state, env=None, logger=None):
 		sample = random.random()
-		eps_threshold = self._get_eps_threshold()
+		eps_threshold = 0  # self._get_eps_threshold()
 		self.iteration += 1
 		if sample > eps_threshold:
 			with torch.no_grad():
-				grasp_pred = self.model(state, is_volatile, specific_rotation).cpu().data.numpy()
+				grasp_pred = self.model(state).cpu().data.numpy()
 				action = np.unravel_index(np.argmax(grasp_pred), grasp_pred.shape)
 			if logger:
 				grasp_pred_vis = self.get_pred_vis(grasp_pred, state.color_map, action)
@@ -118,8 +118,7 @@ class Trainer(object):
 
 	# Compute labels and back-propagate
 	def backprop(self, state, action, next_state, reward):
-		next_grasp_pred = self.target_net(next_state, is_volatile=True)
-		# import pdb; pdb.set_trace()
+		next_grasp_pred = self.target_net(next_state)
 		future_reward = torch.max(next_grasp_pred)
 		expected_reward = reward + self.future_reward_discount * future_reward
 
@@ -128,16 +127,18 @@ class Trainer(object):
 		loss_value = 0
 		# Do for-ward pass with specified rotation (to save gradients)
 		loss_value += self._backward_loss(state, action[0], expected_reward)
-		opposite_rotate_idx = (action[0] + self.model.num_rotations / 2) % self.model.num_rotations
+		opposite_rotate_idx = (action[0] + self.model.num_rotations // 2) % self.model.num_rotations
+		
+		# import pdb; pdb.set_trace()
 		loss_value += self._backward_loss(state, opposite_rotate_idx, expected_reward)
 		loss_value /= 2
 
 		self.optimizer.step()
 		return loss_value
 
-	def _backward_loss(self, state, rotate_idx, expected_rewards):
-		state_action_values = torch.max(self.model(state, False, rotate_idx))
-		loss = self.criterion(state_action_values, expected_rewards)
+	def _backward_loss(self, state_batch, rotate_idx, expected_state_action_values):
+		state_action_values = torch.max(self.model(state_batch, rotate_idx))
+		loss = self.criterion(state_action_values, expected_state_action_values)
 		loss = loss.sum()
 		loss.backward()
 		return loss.cpu().data.numpy()

@@ -55,14 +55,14 @@ class Solver():
 			state = State(self.env.instruction, *self._get_imgs())
 			for t in count():
 				time_0 = time.time()
-				action = self.trainer.select_action(state, is_volatile=True, env=self.env, logger=self.logger)
+				action = self.trainer.select_action(state, env=self.env, logger=self.logger)
 				reward, done = self.env.step(action, state.depth_map, *self.env_step_args)
 				next_state = State(self.env.instruction, *self._get_imgs())  # observe new state
 				self.trainer.memory.push(state, action, next_state, reward)
 
 				state = next_state
 				self._log_board_save(reward, time_0)
-				self._detect_changes(next_state.depth_map, state.depth_map, reward)
+				# self._detect_changes(next_state.depth_map, state.depth_map, reward)
 				if done or self._check_stupid() or (not self.env.is_stable()):
 					break
 			loss = self.trainer.optimize_model()
@@ -102,10 +102,11 @@ class Solver():
 		return color_map, depth_heightmap
 
 	def _check_stupid(self):
-		if self.no_change_cnt > 10:
+		if self.no_change_cnt > 5:
 			self.no_change_cnt = 0
 			# print('no change for a long time, Reset.')
 			return True
+		self.no_change_cnt += 1
 		return False
 
 	def _detect_changes(self, next_depth_data, depth_data, reward):
