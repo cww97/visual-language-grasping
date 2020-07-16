@@ -393,7 +393,7 @@ class SimRobot(BaseRobot):
 		move_step = 0.05 * move_direction / move_magnitude
 		if np.floor(move_direction[0] / move_step[0]) == np.nan or move_step[0] == 0:
 			import pdb; pdb.set_trace() 
-		num_move_steps = int(np.floor(move_direction[0] / move_step[0]))
+		num_move_steps = int(np.floor(move_direction[0] / move_step[0])) if move_step[0] != 0 else 1
 
 		# Compute gripper orientation and rotation increments
 		sim_ret, gripper_orientation = vrep.simxGetObjectOrientation(self.sim_client, self.UR5_target_handle, -1, vrep.simx_opmode_blocking)

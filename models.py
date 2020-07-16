@@ -161,25 +161,36 @@ class reinforcement_net(nn.Module):
 		flow_grid = F.affine_grid(affine_mat, size)
 		return flow_grid
 
+	def train(self, *args):
+		super().train(*args)
+		self.grasp_color_trunk.eval()
+		self.grasp_depth_trunk.eval()
 
-	def forward(self, state, specific_rotation=-1):
-		if specific_rotation == -1 : torch.set_grad_enabled(False)
-		instruction, color_map, depth_map = state
-		text_feature, _, _ = self.text_encoder(instruction.cuda(), instruction.size()[1:])
+	def forward(self, state_batch, rotations=[]):
+		rotations = torch.tensor(rotations).cuda()
+		# state_batch = np.array(state_batch)
+		# import pdb; pdb.set_trace()
+		instructions, color_data, depth_data, widths = state_batch[0]
+		color_data, depth_data = color_data.cuda(), depth_data.cuda()
+		# import pdb; pdb.set_trace()
+		# instructions = state_batch[:, 0]
+		# color_maps = state_batch[:, 1]
+		# depth_maps = state_batch[:, 2]
+		text_feature, _, _ = self.text_encoder(instructions.cuda(), instructions.size()[1:])
 		text_feature = text_feature[:, -1, :]  # (1, d)
-		color_data, depth_data, widths = self._preprocess_img(color_map, depth_map)
+		# import pdb; pdb.set_trace()
 
-		if specific_rotation == -1:
+		if len(rotations) == 0:
 			num_rotates = self.num_rotations
 			prev_rotate_mats = self.prev_rotate_mats
 			post_rotate_mats = self.post_rotate_mats
 		else:
-			num_rotates = 1
-			prev_rotate_mats = self.prev_rotate_mats[specific_rotation].unsqueeze(0)
-			post_rotate_mats = self.post_rotate_mats[specific_rotation].unsqueeze(0)
-		
-		color_datas = color_data.repeat(num_rotates, 1, 1, 1)
-		depth_datas = depth_data.repeat(num_rotates, 1, 1, 1)
+			num_rotates = rotations.shape[0]
+			prev_rotate_mats = self.prev_rotate_mats.index_select(0, rotations)
+			post_rotate_mats = self.post_rotate_mats.index_select(0, rotations)
+
+		color_datas = color_data.repeat(num_rotates*len(state_batch), 1, 1, 1)
+		depth_datas = depth_data.repeat(num_rotates*len(state_batch), 1, 1, 1)
 		rotate_colors = F.grid_sample(color_datas, prev_rotate_mats, mode='nearest')
 		rotate_depths = F.grid_sample(depth_datas, prev_rotate_mats, mode='nearest')
 		color_feats = self.grasp_color_trunk.features(rotate_colors)
@@ -190,56 +201,8 @@ class reinforcement_net(nn.Module):
 		grasp_preds = F.grid_sample(grasp_preds, post_rotate_mats, mode='nearest')
 		grasp_preds = self.unsample(grasp_preds)
 		grasp_preds = grasp_preds[:, 0, widths[0]:widths[1], widths[0]:widths[1]]
-
 		# import pdb; pdb.set_trace()
-		if specific_rotation == -1 : torch.set_grad_enabled(True)
 		return grasp_preds
-
-	def _preprocess_img(self, color_heightmap, depth_heightmap):
-		# Apply 2x scale to input heightmaps
-		color_heightmap_2x = ndimage.zoom(color_heightmap, zoom=[2, 2, 1], order=0)
-		depth_heightmap_2x = ndimage.zoom(depth_heightmap, zoom=[2, 2], order=0)
-
-		# Add extra padding (to handle rotations inside network)
-		diag_length = float(color_heightmap_2x.shape[0]) * np.sqrt(2)
-		diag_length = np.ceil(diag_length / 32) * 32
-		padding_width = int((diag_length - color_heightmap_2x.shape[0]) / 2)
-		color_heightmap_2x_r = np.pad(color_heightmap_2x[:, :, 0], padding_width, 'constant', constant_values=0)
-		color_heightmap_2x_r.shape = (color_heightmap_2x_r.shape[0], color_heightmap_2x_r.shape[1], 1)
-		color_heightmap_2x_g = np.pad(color_heightmap_2x[:, :, 1], padding_width, 'constant', constant_values=0)
-		color_heightmap_2x_g.shape = (color_heightmap_2x_g.shape[0], color_heightmap_2x_g.shape[1], 1)
-		color_heightmap_2x_b = np.pad(color_heightmap_2x[:, :, 2], padding_width, 'constant', constant_values=0)
-		color_heightmap_2x_b.shape = (color_heightmap_2x_b.shape[0], color_heightmap_2x_b.shape[1], 1)
-		color_heightmap_2x = np.concatenate((color_heightmap_2x_r, color_heightmap_2x_g, color_heightmap_2x_b), axis=2)
-		depth_heightmap_2x = np.pad(depth_heightmap_2x, padding_width, 'constant', constant_values=0)
-		# import cv2; cv2.imwrite('rua_padding.png', color_heightmap_2x)
-
-		# Pre-process color image (scale and normalize)
-		image_mean = [0.485, 0.456, 0.406]
-		image_std = [0.229, 0.224, 0.225]
-		input_color_image = color_heightmap_2x.astype(float) / 255
-		for c in range(3):
-			input_color_image[:, :, c] = (input_color_image[:, :, c] - image_mean[c]) / image_std[c]
-
-		# Pre-process depth image (normalize)
-		image_mean = [0.01, 0.01, 0.01]
-		image_std = [0.03, 0.03, 0.03]
-		depth_heightmap_2x.shape = (depth_heightmap_2x.shape[0], depth_heightmap_2x.shape[1], 1)
-		input_depth_image = np.concatenate((depth_heightmap_2x, depth_heightmap_2x, depth_heightmap_2x), axis=2)
-		for c in range(3):
-			input_depth_image[:, :, c] = (input_depth_image[:, :, c] - image_mean[c]) / image_std[c]
-
-		# Construct minibatch of size 1 (b,c,h,w)
-		_shape = input_color_image.shape
-		input_color_image.shape = (_shape[0], _shape[1], _shape[2], 1)
-		input_depth_image.shape = (_shape[0], _shape[1], _shape[2], 1)
-
-		widths = (padding_width//2, color_heightmap_2x.shape[0]//2 - padding_width //2)
-		color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
-		depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
-		color_data = Variable(color_data, requires_grad=False).cuda()
-		depth_data = Variable(depth_data, requires_grad=False).cuda()
-		return color_data, depth_data, widths
 
 
 class CNN_Text(nn.Module):

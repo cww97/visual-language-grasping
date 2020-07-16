@@ -15,7 +15,7 @@ from collections import namedtuple
 import random
 import math
 
-State = namedtuple('State', ('instruction', 'color_map', 'depth_map'))
+State = namedtuple('State', ('instruction', 'color_data', 'depth_data', 'widths'))
 Action = namedtuple('Action', ('r', 'x', 'y'))
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -85,24 +85,22 @@ class Trainer(object):
 	def _get_eps_threshold(self, EPS_START=0.9, EPS_END=0.05, EPS_DECAY=200):
 		return EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.iteration / EPS_DECAY)
 
-	def select_action(self, state, env=None, logger=None):
+	def select_action(self, state, env=None):
 		sample = random.random()
-		eps_threshold = 0  # self._get_eps_threshold()
+		eps_threshold = self._get_eps_threshold()
 		self.iteration += 1
+
 		if sample > eps_threshold:
 			with torch.no_grad():
-				grasp_pred = self.model(state).cpu().data.numpy()
+				grasp_pred = self.model([state]).cpu().data.numpy()
 				action = np.unravel_index(np.argmax(grasp_pred), grasp_pred.shape)
-			if logger:
-				grasp_pred_vis = self.get_pred_vis(grasp_pred, state.color_map, action)
-				logger.save_visualizations(self.iteration, grasp_pred_vis, 'grasp')
+				choice = 'policy_network'
 		else:
+			grasp_pred = None
 			action = env.random_grasp_action()
+			choice = 'random_select'
 
-		if logger:
-			self.action_log.append([1, action[0], action[1], action[2]])
-			logger.write_to_log('action', self.action_log)
-		return action
+		return choice, action, grasp_pred
 
 	def optimize_model(self):
 		if len(self.memory) < self.BATCH_SIZE: return None
@@ -117,27 +115,31 @@ class Trainer(object):
 		return loss
 
 	# Compute labels and back-propagate
-	def backprop(self, state, action, next_state, reward):
-		next_grasp_pred = self.target_net(next_state)
-		future_reward = torch.max(next_grasp_pred)
-		expected_reward = reward + self.future_reward_discount * future_reward
+	def backprop(self, state, action, next_states, reward):
+		with torch.no_grad():
+			next_grasp_pred = self.target_net([next_states])
+			future_reward = torch.max(next_grasp_pred)
+			expected_reward = reward + self.future_reward_discount * future_reward
 
 		# Compute loss and backward pass
 		self.optimizer.zero_grad()
 		loss_value = 0
 		# Do for-ward pass with specified rotation (to save gradients)
-		loss_value += self._backward_loss(state, action[0], expected_reward)
+		# rotations = [action[0], (action[0] + self.model.num_rotations // 2) % self.model.num_rotations]
+		loss_value += self._backward_loss([state], [action[0]], expected_reward)
 		opposite_rotate_idx = (action[0] + self.model.num_rotations // 2) % self.model.num_rotations
 		
 		# import pdb; pdb.set_trace()
-		loss_value += self._backward_loss(state, opposite_rotate_idx, expected_reward)
+		loss_value += self._backward_loss([state], [opposite_rotate_idx], expected_reward)
 		loss_value /= 2
 
 		self.optimizer.step()
 		return loss_value
 
-	def _backward_loss(self, state_batch, rotate_idx, expected_state_action_values):
-		state_action_values = torch.max(self.model(state_batch, rotate_idx))
+	def _backward_loss(self, state_batch, rotations, expected_state_action_values):
+		# import pdb; pdb.set_trace()
+		
+		state_action_values = torch.max(self.model(state_batch, rotations))
 		loss = self.criterion(state_action_values, expected_state_action_values)
 		loss = loss.sum()
 		loss.backward()
