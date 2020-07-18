@@ -9,7 +9,6 @@ import torch.nn.functional as F
 import torchvision
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from scipy import ndimage
 
 
 class EncoderLSTM(nn.Module):
@@ -87,14 +86,17 @@ class BiAttention(nn.Module):
 		feature_map:     batch * c * w * h
 		feature_vector:  batch * d
 		'''
+		# TODO: debug
+		print(img_feat_map.shape, word_feat_vec.shape)
+		import pdb; pdb.set_trace()
 		batch_size = img_feat_map.size()[0]
 		conv_size = img_feat_map.size()[3]  # w == h
 		
 		# wh_feat = torch.transpose(torch.transpose(img_feat_map, 1, 2), 2, 3)  
 		wh_feat = img_feat_map.permute(0, 2, 3, 1)  # reshape (b, w, h, c)
-		wh_feat = wh_feat.contiguous().view(batch_size*conv_size*conv_size, -1)
-		wh_feat = self.fc_1_a(wh_feat)  # [400, 1024]
-		wd_feat = self.fc_1_b(word_feat_vec).repeat(batch_size*conv_size*conv_size, 1)  # [400, 1024]
+		wh_feat = wh_feat.contiguous().view(batch_size*conv_size*conv_size, -1)  # [b*w*h, c]
+		wh_feat = self.fc_1_a(wh_feat)  # [b*w*h, hidden_dim]: [400, 1024]
+		wd_feat = self.fc_1_b(word_feat_vec).repeat_interleave(conv_size*conv_size, 0)  # [b*w*h, hidden_dim:1024]
 		kx_feat = self.fc_2(torch.tanh(wh_feat * wd_feat))  # zkx feature, [400, 1024]
 
 		atten = self.fc_3(kx_feat)  # [400, 1], now attention
@@ -167,36 +169,40 @@ class reinforcement_net(nn.Module):
 		self.grasp_depth_trunk.eval()
 
 	def forward(self, state_batch, rotations=[]):
+		'''
+		rotations == []: sample, run the model for 16 rotations
+		rotations != []: batch training, batch_size == len(rotations)
+		'''
+		# unpack 
 		rotations = torch.tensor(rotations).cuda()
-		# state_batch = np.array(state_batch)
+		instructions = torch.cat([s[0] for s in state_batch]).cuda()
+		color_datas = torch.cat([s[1] for s in state_batch]).cuda()
+		depth_datas = torch.cat([s[2] for s in state_batch]).cuda()
+		widths = torch.cat([torch.tensor(s[3]) for s in state_batch]).cuda()
+		
+		lengths = torch.tensor(instructions.size()[1:]).repeat(instructions.size()[0])
 		# import pdb; pdb.set_trace()
-		instructions, color_data, depth_data, widths = state_batch[0]
-		color_data, depth_data = color_data.cuda(), depth_data.cuda()
-		# import pdb; pdb.set_trace()
-		# instructions = state_batch[:, 0]
-		# color_maps = state_batch[:, 1]
-		# depth_maps = state_batch[:, 2]
-		text_feature, _, _ = self.text_encoder(instructions.cuda(), instructions.size()[1:])
-		text_feature = text_feature[:, -1, :]  # (1, d)
-		# import pdb; pdb.set_trace()
+		text_feats, _, _ = self.text_encoder(instructions, lengths)  # (N, d)
+		text_feats = text_feats[:, -1, :]
 
-		if len(rotations) == 0:
-			num_rotates = self.num_rotations
+		if len(rotations) == 0:  # for 16 rotations
 			prev_rotate_mats = self.prev_rotate_mats
 			post_rotate_mats = self.post_rotate_mats
+			# text_feats = 
+			text_feats = text_feats.repeat(self.num_rotations, 1)  # [16, d]
+			color_datas = color_datas.repeat(self.num_rotations, 1, 1, 1)
+			depth_datas = depth_datas.repeat(self.num_rotations, 1, 1, 1)
 		else:
-			num_rotates = rotations.shape[0]
 			prev_rotate_mats = self.prev_rotate_mats.index_select(0, rotations)
 			post_rotate_mats = self.post_rotate_mats.index_select(0, rotations)
 
-		color_datas = color_data.repeat(num_rotates*len(state_batch), 1, 1, 1)
-		depth_datas = depth_data.repeat(num_rotates*len(state_batch), 1, 1, 1)
 		rotate_colors = F.grid_sample(color_datas, prev_rotate_mats, mode='nearest')
 		rotate_depths = F.grid_sample(depth_datas, prev_rotate_mats, mode='nearest')
 		color_feats = self.grasp_color_trunk.features(rotate_colors)
 		depth_feats = self.grasp_depth_trunk.features(rotate_depths)
 		image_feats = torch.cat((color_feats, depth_feats), dim=1)
-		atten_feats, _ = self.attention_layer(image_feats, text_feature)
+		# import pdb; pdb.set_trace()
+		atten_feats, _ = self.attention_layer(image_feats, text_feats)
 		grasp_preds = self.graspnet(atten_feats)
 		grasp_preds = F.grid_sample(grasp_preds, post_rotate_mats, mode='nearest')
 		grasp_preds = self.unsample(grasp_preds)

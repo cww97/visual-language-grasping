@@ -91,7 +91,7 @@ class Solver():
 		# import pdb; pdb.set_trace()
 		if choice == 'policy_network':
 			grasp_pred_vis = self.trainer.get_pred_vis(grasp_pred, color_map, action)
-			self.logger.save_visualizations(self.iteration, grasp_pred_vis, 'grasp')
+			self.logger.save_visualizations(self.trainer.iteration, grasp_pred_vis, 'grasp')
 		# Save model snapshot
 		self.logger.save_backup_model(self.trainer.model, 'reinforcement')
 		if self.trainer.iteration % 50 == 0:

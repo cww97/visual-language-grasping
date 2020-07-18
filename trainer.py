@@ -87,7 +87,7 @@ class Trainer(object):
 
 	def select_action(self, state, env=None):
 		sample = random.random()
-		eps_threshold = self._get_eps_threshold()
+		eps_threshold = 0  # self._get_eps_threshold()
 		self.iteration += 1
 
 		if sample > eps_threshold:
@@ -130,7 +130,7 @@ class Trainer(object):
 		opposite_rotate_idx = (action[0] + self.model.num_rotations // 2) % self.model.num_rotations
 		
 		# import pdb; pdb.set_trace()
-		loss_value += self._backward_loss([state], [opposite_rotate_idx], expected_reward)
+		loss_value += self._backward_loss([state, state], [action[0], opposite_rotate_idx], expected_reward)
 		loss_value /= 2
 
 		self.optimizer.step()
@@ -138,9 +138,9 @@ class Trainer(object):
 
 	def _backward_loss(self, state_batch, rotations, expected_state_action_values):
 		# import pdb; pdb.set_trace()
-		
 		state_action_values = torch.max(self.model(state_batch, rotations))
 		loss = self.criterion(state_action_values, expected_state_action_values)
+		# import pdb; pdb.set_trace()
 		loss = loss.sum()
 		loss.backward()
 		return loss.cpu().data.numpy()
