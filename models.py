@@ -86,9 +86,7 @@ class BiAttention(nn.Module):
 		feature_map:     batch * c * w * h
 		feature_vector:  batch * d
 		'''
-		# TODO: debug
-		print(img_feat_map.shape, word_feat_vec.shape)
-		import pdb; pdb.set_trace()
+		# print(img_feat_map.shape, word_feat_vec.shape)
 		batch_size = img_feat_map.size()[0]
 		conv_size = img_feat_map.size()[3]  # w == h
 		

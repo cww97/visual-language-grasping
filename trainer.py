@@ -116,34 +116,25 @@ class Trainer(object):
 
 	# Compute labels and back-propagate
 	def backprop(self, state, action, next_states, reward):
+		state_batch = [state, state]
+		rotations = [action[0], (action[0] + _opposite_rotate_idx(action[0])]
 		with torch.no_grad():
 			next_grasp_pred = self.target_net([next_states])
 			future_reward = torch.max(next_grasp_pred)
-			expected_reward = reward + self.future_reward_discount * future_reward
+			expected_state_action_values = reward + self.future_reward_discount * future_reward
+		expected_state_action_values = torch.tensor([expected_state_action_values, expected_state_action_values]).cuda()
 
 		# Compute loss and backward pass
 		self.optimizer.zero_grad()
-		loss_value = 0
-		# Do for-ward pass with specified rotation (to save gradients)
-		# rotations = [action[0], (action[0] + self.model.num_rotations // 2) % self.model.num_rotations]
-		loss_value += self._backward_loss([state], [action[0]], expected_reward)
-		opposite_rotate_idx = (action[0] + self.model.num_rotations // 2) % self.model.num_rotations
-		
-		# import pdb; pdb.set_trace()
-		loss_value += self._backward_loss([state, state], [action[0], opposite_rotate_idx], expected_reward)
-		loss_value /= 2
-
-		self.optimizer.step()
-		return loss_value
-
-	def _backward_loss(self, state_batch, rotations, expected_state_action_values):
-		# import pdb; pdb.set_trace()
-		state_action_values = torch.max(self.model(state_batch, rotations))
+		state_action_values = self.model(state_batch, rotations).contiguous().view(2, -1).max(1).values
 		loss = self.criterion(state_action_values, expected_state_action_values)
-		# import pdb; pdb.set_trace()
-		loss = loss.sum()
+		loss = loss.mean()
 		loss.backward()
+		self.optimizer.step()
 		return loss.cpu().data.numpy()
+
+	def _opposite_rotate_idx(self, idx):
+		return (idx + self.model.num_rotations // 2) % self.model.num_rotations
 
 	def get_pred_vis(self, predictions, color_map, best_pix):
 		canvas = None
