@@ -63,9 +63,17 @@ class Solver():
 				self._log_board_save(color_map, choice, action, grasp_pred, reward)
 
 				# observe new state
-				img_data, color_map, depth_map = self._get_imgs()
-				next_state = State(self.env.instruction, *img_data)  
-				self.trainer.memory.push(state, action, next_state, reward)
+				if done:
+					next_state = None
+				else:
+					img_data, color_map, depth_map = self._get_imgs()
+					next_state = State(self.env.instruction, *img_data)
+				
+				# store in replay buffer
+				if reward == -2:
+					self.trainer.fail_memory.push(state, action, next_state, reward)
+				else:
+					self.trainer.grasp_memory.push(state, action, next_state, reward)
 				state = next_state
 
 				print('Iter: %d, %s, Reward = %d, Time: %.2f' % (

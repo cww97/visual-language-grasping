@@ -9,6 +9,8 @@ import torch.nn.functional as F
 import torchvision
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from collections import namedtuple
+State = namedtuple('State', ('instruction', 'color_data', 'depth_data', 'widths'))
 
 
 class EncoderLSTM(nn.Module):
@@ -166,46 +168,43 @@ class reinforcement_net(nn.Module):
 		self.grasp_color_trunk.eval()
 		self.grasp_depth_trunk.eval()
 
-	def forward(self, state_batch, rotations=[]):
+	def forward(self, states, rotations=[]):
 		'''
-		rotations == []: sample, run the model for 16 rotations
-		rotations != []: batch training, batch_size == len(rotations)
+		3 stituations:
+			- sample: batch_size == 1, 16 rotations(len(rotations) == 0)
+			- target_net: batch forward, 16 rotations(len(rotations) == 0)
+			- policy_net: batch forward, 1 roatation
 		'''
-		# unpack 
-		rotations = torch.tensor(rotations).cuda()
-		instructions = torch.cat([s[0] for s in state_batch]).cuda()
-		color_datas = torch.cat([s[1] for s in state_batch]).cuda()
-		depth_datas = torch.cat([s[2] for s in state_batch]).cuda()
-		widths = torch.cat([torch.tensor(s[3]) for s in state_batch]).cuda()
-		
-		lengths = torch.tensor(instructions.size()[1:]).repeat(instructions.size()[0])
-		# import pdb; pdb.set_trace()
-		text_feats, _, _ = self.text_encoder(instructions, lengths)  # (N, d)
-		text_feats = text_feats[:, -1, :]
-
+		# unpack
+		batch_size = len(states)
+		states = State(*zip(*states))
 		if len(rotations) == 0:  # for 16 rotations
-			prev_rotate_mats = self.prev_rotate_mats
-			post_rotate_mats = self.post_rotate_mats
-			# text_feats = 
-			text_feats = text_feats.repeat(self.num_rotations, 1)  # [16, d]
-			color_datas = color_datas.repeat(self.num_rotations, 1, 1, 1)
-			depth_datas = depth_datas.repeat(self.num_rotations, 1, 1, 1)
+			num_rotations = 16
+			prev_rotate_mats = self.prev_rotate_mats.repeat(batch_size, 1, 1, 1)
+			post_rotate_mats = self.post_rotate_mats.repeat(batch_size, 1, 1, 1)
 		else:
+			num_rotations = 1
 			prev_rotate_mats = self.prev_rotate_mats.index_select(0, rotations)
 			post_rotate_mats = self.post_rotate_mats.index_select(0, rotations)
+		instructions = torch.cat([i.repeat(num_rotations, 1) for i in states.instruction]).cuda()  # [B*16, d]
+		color_datas = torch.cat([c.repeat(num_rotations, 1, 1, 1) for c in states.color_data]).cuda()
+		depth_datas = torch.cat([d.repeat(num_rotations, 1, 1, 1) for d in states.depth_data]).cuda()
+		widths = torch.tensor(states.widths[0]).cuda()
+
+		lengths = torch.tensor([len(i) for i in instructions]).cuda()
+		text_feats, _, _ = self.text_encoder(instructions, lengths)  # (N, d)
+		text_feats = text_feats[:, -1, :]
 
 		rotate_colors = F.grid_sample(color_datas, prev_rotate_mats, mode='nearest')
 		rotate_depths = F.grid_sample(depth_datas, prev_rotate_mats, mode='nearest')
 		color_feats = self.grasp_color_trunk.features(rotate_colors)
 		depth_feats = self.grasp_depth_trunk.features(rotate_depths)
 		image_feats = torch.cat((color_feats, depth_feats), dim=1)
-		# import pdb; pdb.set_trace()
 		atten_feats, _ = self.attention_layer(image_feats, text_feats)
 		grasp_preds = self.graspnet(atten_feats)
 		grasp_preds = F.grid_sample(grasp_preds, post_rotate_mats, mode='nearest')
 		grasp_preds = self.unsample(grasp_preds)
 		grasp_preds = grasp_preds[:, 0, widths[0]:widths[1], widths[0]:widths[1]]
-		# import pdb; pdb.set_trace()
 		return grasp_preds
 
 

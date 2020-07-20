@@ -4,9 +4,9 @@ from enum import Enum
 
 
 class Reward(Enum):
-    SUCCESS = 5
-    FAIL = -2
-    WRONG = -1
+    SUCCESS = 5.0
+    FAIL = -2.0
+    WRONG = -1.0
 
 
 class Robot(metaclass=ABCMeta):

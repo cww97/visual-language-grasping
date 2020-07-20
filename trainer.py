@@ -58,14 +58,15 @@ class Trainer(object):
 		self.target_net.load_state_dict(self.model.state_dict())
 		self.target_net.eval()
 
-		self.future_reward_discount = future_reward_discount
+		self.GAMMA = future_reward_discount
 		self.criterion = torch.nn.SmoothL1Loss(reduction='none').cuda()  # Initialize Huber loss
 
 		# Initialize optimizer
 		self.optimizer = torch.optim.Adam(self.model.parameters())
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
 		self.BATCH_SIZE = 2
-		self.memory = ReplayMemory(256)
+		self.fail_memory = ReplayMemory(256)
+		self.grasp_memory = ReplayMemory(256)
 		self.iteration = 0
 
 		# Initialize lists to save execution info and RL variables
@@ -103,35 +104,40 @@ class Trainer(object):
 		return choice, action, grasp_pred
 
 	def optimize_model(self):
+		# TODO: replay buffer update
 		if len(self.memory) < self.BATCH_SIZE: return None
 		transitions = self.memory.sample(self.BATCH_SIZE)
-		# batch = Transition(*zip(*transitions))
-		# import pdb; pdb.set_trace()
-		loss = 0.0
-		for transition in transitions:
-			loss += self.backprop(*transition)
-		loss /= self.BATCH_SIZE
-		print("model updated, loss = %.4f" % (loss))
-		return loss
+		batch = Transition(*zip(*transitions))
+		rotate_batch = torch.tensor(batch.action)[:, 0].to(self.device)
+		reward_batch = torch.tensor(batch.reward).to(self.device)
+		non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,batch.next_state)),
+									  device=self.device, dtype=torch.bool)
+		non_final_next_states = [s for s in batch.next_state if s is not None]
 
-	# Compute labels and back-propagate
-	def backprop(self, state, action, next_states, reward):
-		state_batch = [state, state]
-		rotations = [action[0], (action[0] + _opposite_rotate_idx(action[0])]
-		with torch.no_grad():
-			next_grasp_pred = self.target_net([next_states])
-			future_reward = torch.max(next_grasp_pred)
-			expected_state_action_values = reward + self.future_reward_discount * future_reward
-		expected_state_action_values = torch.tensor([expected_state_action_values, expected_state_action_values]).cuda()
+		import pdb; pdb.set_trace()
 
-		# Compute loss and backward pass
+		# Compute Q(s_t, a)
+		preds = self.model(batch.state, rotate_batch).contiguous()
+		state_action_values = preds.view(self.BATCH_SIZE, -1).max(1).values
+		import pdb; pdb.set_trace()
+		
+		with torch.no_grad():  # Compute V(s_{t+1}) for all next states
+			non_final_next_preds = self.target_net(non_final_next_states).contiguous()
+			non_final_next_values = non_final_next_preds.view(self.BATCH_SIZE, -1).max(1).values
+			next_state_values = torch.zeros(self.BATCH_SIZE, device=self.device)
+			next_state_values[non_final_mask] = non_final_next_values
+			# Compute the expected Q values
+			expected_state_action_values = reward_batch + self.GAMMA * next_state_values
+
+		# Huber loss
+		loss = F.smooth_l1_loss(state_action_values, expected_state_action_values)
+		# Optimize the model
 		self.optimizer.zero_grad()
-		state_action_values = self.model(state_batch, rotations).contiguous().view(2, -1).max(1).values
-		loss = self.criterion(state_action_values, expected_state_action_values)
-		loss = loss.mean()
 		loss.backward()
+		torch.nn.utils.clip_grad_norm_(self.model.parameters(), 20)
 		self.optimizer.step()
-		return loss.cpu().data.numpy()
+		import pdb; pdb.set_trace()
+		return float(loss)
 
 	def _opposite_rotate_idx(self, idx):
 		return (idx + self.model.num_rotations // 2) % self.model.num_rotations
