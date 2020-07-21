@@ -62,26 +62,19 @@ class Solver():
 				choice, action, grasp_pred = self.trainer.select_action(state, self.env)
 				reward, done = self.env.step(action, depth_map, *self.env_step_args)
 				self._log_board_save(color_map, choice, action, grasp_pred, reward)
-
+				
 				# observe new state
-				if done:
-					next_state = None
-				else:
-					img_data, color_map, depth_map = self._get_imgs()
-					next_state = State(self.env.instruction, *img_data)
+				img_data, color_map, depth_map = self._get_imgs()
+				next_state = None if done else State(self.env.instruction, *img_data)
 				
 				# store in replay buffer
 				self.trainer.memory.push(state, action, next_state, reward)
 				state = next_state
-
 				print('Iter: %d, %s, Reward = %d, Time: %.2f' % (
-					self.trainer.iteration, choice, reward, (time.time() - time_0)
-				))
-				if done or self._check_stupid() or (not self.env.is_stable()):
-					break
+					self.trainer.iteration, choice, reward, (time.time() - time_0)))
+				if done or self._check_stupid() or (not self.env.is_stable()): break
 			loss = self.trainer.optimize_model()
-			if loss:
-				self.writer.add_scalar('VLG/loss', loss, self.trainer.iteration)
+			if loss: self.writer.add_scalar('VLG/loss', loss, self.trainer.iteration)
 			if epoch % 5 == 0:
 				self.trainer.target_net.load_state_dict(self.trainer.model.state_dict())
 
@@ -102,6 +95,7 @@ class Solver():
 		self.logger.save_backup_model(self.trainer.model, 'reinforcement')
 		if self.trainer.iteration % 50 == 0:
 			self.logger.save_model(self.trainer.iteration, self.trainer.model, 'reinforcement')
+			self.trainer.model = self.trainer.model.to(self.trainer.device)
 
 	def _optimize_model(self):
 		TARGET_UPDATE = 5

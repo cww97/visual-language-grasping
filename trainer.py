@@ -44,8 +44,9 @@ class ReplayMemory(object):
 class MultiReplayMemory(object):
 
 	def __init__(self, capacity):
-		self.fail_memory = ReplayMemory(capacity)
-		self.grasp_memory = ReplayMemory(capacity)
+		f, g = self._distrubute_(capacity)
+		self.fail_memory = ReplayMemory(f)
+		self.grasp_memory = ReplayMemory(g)
 	
 	def push(self, *args):
 		transition = Transition(*args)
@@ -55,15 +56,15 @@ class MultiReplayMemory(object):
 			self.grasp_memory.push(transition)
 	
 	def sample(self, batch_size):
-		f = batch_size >> 1
-		g = batch_size - f
+		f, g = self._distrubute_(batch_size)
 		if len(self.fail_memory) >= f and len(self.grasp_memory) >= g:
 			return self.fail_memory.sample(f) + self.grasp_memory.sample(g)
 		return None
 	
-	def _distrubute_(self):
-		
-		pass
+	def _distrubute_(self, n):
+		f = n >> 1
+		g = n - f
+		return f, g
 
 
 class Trainer(object):
@@ -73,7 +74,6 @@ class Trainer(object):
 		
 		self.text_data = TextData()
 		vocab, pad_idx = len(self.text_data.text_field.vocab), self.text_data.padding_idx
-
 		self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
 		if load_snapshot:  # Load pre-trained model
 			self.model.load_state_dict(torch.load(snapshot_file))
@@ -138,8 +138,6 @@ class Trainer(object):
 		non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,batch.next_state)),
 									  device=self.device, dtype=torch.bool)
 		non_final_next_states = [s for s in batch.next_state if s is not None]
-		if non_final_next_states == []:
-			import pdb; pdb.set_trace()
 		non_final_len = len(non_final_next_states)
 
 		# Compute Q(s_t, a)

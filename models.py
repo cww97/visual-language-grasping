@@ -52,11 +52,12 @@ class EncoderLSTM(nn.Module):
 	def forward(self, inputs, lengths):
 		''' Expects input vocab indices as (batch, seq_len). Also requires a
 			list of lengths for dynamic batching. '''
+		if self.embedding.weight.device.type == 'cpu':
+			import pdb; pdb.set_trace()
 		embeds = self.embedding(inputs)   # (batch, seq_len, embedding_size)
-		# embeds = self.drop(embeds)
-		h0, c0 = self.init_state(inputs)
-		# import pdb; pdb.set_trace()
+		embeds = self.drop(embeds)
 		packed_embeds = pack_padded_sequence(embeds, lengths, batch_first=True, enforce_sorted=False)
+		h0, c0 = self.init_state(inputs)
 		enc_h, (enc_h_t, enc_c_t) = self.lstm(packed_embeds, (h0, c0))
 
 		if self.num_directions == 2:
@@ -112,7 +113,6 @@ class reinforcement_net(nn.Module):
 	def __init__(self, **kwargs):
 		super().__init__()
 		self.text_encoder = EncoderLSTM(**kwargs)
-		# self.text_encoder = EncoderLSTM(**kwargs)
 
 		# Initialize network trunks with DenseNet pre-trained on ImageNet
 		self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
