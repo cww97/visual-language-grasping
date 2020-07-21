@@ -3,50 +3,57 @@ import re
 
 import yaml
 from torchtext import data
-
+from collections import namedtuple
+Instruction = namedtuple('Instruction', ('tensor', 'length'))
 
 class Data(object):
 
-    class DataSet(data.TabularDataset):
+	class DataSet(data.TabularDataset):
+		@staticmethod
+		def sort_key(ex):
+			return len(ex.text)
 
-        @staticmethod
-        def sort_key(ex):
-            return len(ex.text)
+		def __init__(self, text_field: data.Field, filename):
+			def clean_str(string):
+				"""
+				Tokenization/string cleaning for all datasets except for SST.
+				Original taken from https://github.com/yoonkim/CNN_sentence/blob/master/process_data.py
+				"""
+				string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
+				string = re.sub(r"\'s", " \'s", string)
+				string = re.sub(r"\'ve", " \'ve", string)
+				string = re.sub(r"n\'t", " n\'t", string)
+				string = re.sub(r"\'re", " \'re", string)
+				string = re.sub(r"\'d", " \'d", string)
+				string = re.sub(r"\'ll", " \'ll", string)
+				string = re.sub(r",", " , ", string)
+				string = re.sub(r"!", " ! ", string)
+				string = re.sub(r"\(", " \\( ", string)
+				string = re.sub(r"\)", " \\) ", string)
+				string = re.sub(r"\?", " \\? ", string)
+				string = re.sub(r"\s{2,}", " ", string)
+				return string.strip().split()
 
-        def __init__(self, text_field: data.Field, filename):
-            def clean_str(string):
-                """
-                Tokenization/string cleaning for all datasets except for SST.
-                Original taken from https://github.com/yoonkim/CNN_sentence/blob/master/process_data.py
-                """
-                string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
-                string = re.sub(r"\'s", " \'s", string)
-                string = re.sub(r"\'ve", " \'ve", string)
-                string = re.sub(r"n\'t", " n\'t", string)
-                string = re.sub(r"\'re", " \'re", string)
-                string = re.sub(r"\'d", " \'d", string)
-                string = re.sub(r"\'ll", " \'ll", string)
-                string = re.sub(r",", " , ", string)
-                string = re.sub(r"!", " ! ", string)
-                string = re.sub(r"\(", " \\( ", string)
-                string = re.sub(r"\)", " \\) ", string)
-                string = re.sub(r"\?", " \\? ", string)
-                string = re.sub(r"\s{2,}", " ", string)
-                return string.strip().split()
+			text_field.tokenize = clean_str
+			fields = [('text', text_field)]
+			super().__init__(filename, format='tsv', fields=fields)	
 
-            text_field.tokenize = clean_str
-            fields = [('text', text_field)]
-            super().__init__(filename, format='tsv', fields=fields)
 
-    def __init__(self, filename=os.path.join(os.path.dirname(__file__), 'sample.tsv')):
-        self.text_field = data.Field(lower=True)
-        self.dataset = Data.DataSet(self.text_field, filename)
-        self.text_field.build_vocab(self.dataset)
-        self.padding_idx = self.text_field.vocab.stoi[self.text_field.pad_token]
+	def __init__(self, filename=os.path.join(os.path.dirname(__file__), 'sample.tsv')):
+		self.text_field = data.Field(lower=True)
+		self.dataset = Data.DataSet(self.text_field, filename)
+		self.text_field.build_vocab(self.dataset)
+		self.padding_idx = self.text_field.vocab.stoi[self.text_field.pad_token]
+		
+		self.seq_len = 10
 
-    def get_tensor(self, x: str):
-        x = self.text_field.preprocess(x)
-        return self.text_field.numericalize([x]).t()
+	def get_tensor(self, x: str):
+		x = self.text_field.preprocess(x)
+		length = len(x)
+		if length < self.seq_len:
+			x += [self.text_field.pad_token] * (self.seq_len - length)
+		ret = self.text_field.numericalize([x]).t()
+		return Instruction(ret, length)
 
 
 def generate(inf, ouf):

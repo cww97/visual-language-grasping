@@ -9,13 +9,13 @@ from torch.autograd import Variable
 
 from envs.data import Data as TextData
 from envs.robot import Reward
-from models import reinforcement_net
+from models import reinforcement_net, State
 from utils import CrossEntropyLoss2d
 from collections import namedtuple
 import random
 import math
 
-State = namedtuple('State', ('instruction', 'color_data', 'depth_data', 'widths'))
+
 Action = namedtuple('Action', ('r', 'x', 'y'))
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -27,11 +27,11 @@ class ReplayMemory(object):
         self.memory = []
         self.position = 0
 
-    def push(self, *args):
+    def push(self, transition):
         """Saves a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
+        self.memory[self.position] = transition
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
@@ -39,6 +39,31 @@ class ReplayMemory(object):
 
     def __len__(self):
         return len(self.memory)
+
+
+class MultiReplayMemory(object):
+
+	def __init__(self, capacity):
+		self.fail_memory = ReplayMemory(capacity)
+		self.grasp_memory = ReplayMemory(capacity)
+	
+	def push(self, *args):
+		transition = Transition(*args)
+		if transition.reward == -2:
+			self.fail_memory.push(transition)
+		else:
+			self.grasp_memory.push(transition)
+	
+	def sample(self, batch_size):
+		f = batch_size >> 1
+		g = batch_size - f
+		if len(self.fail_memory) >= f and len(self.grasp_memory) >= g:
+			return self.fail_memory.sample(f) + self.grasp_memory.sample(g)
+		return None
+	
+	def _distrubute_(self):
+		
+		pass
 
 
 class Trainer(object):
@@ -64,9 +89,8 @@ class Trainer(object):
 		# Initialize optimizer
 		self.optimizer = torch.optim.Adam(self.model.parameters())
 		# self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum=0.9, weight_decay=2e-5)
-		self.BATCH_SIZE = 2
-		self.fail_memory = ReplayMemory(256)
-		self.grasp_memory = ReplayMemory(256)
+		self.BATCH_SIZE = 4
+		self.memory = MultiReplayMemory(256)
 		self.iteration = 0
 
 		# Initialize lists to save execution info and RL variables
@@ -88,7 +112,7 @@ class Trainer(object):
 
 	def select_action(self, state, env=None):
 		sample = random.random()
-		eps_threshold = 0  # self._get_eps_threshold()
+		eps_threshold = self._get_eps_threshold()
 		self.iteration += 1
 
 		if sample > eps_threshold:
@@ -104,39 +128,42 @@ class Trainer(object):
 		return choice, action, grasp_pred
 
 	def optimize_model(self):
-		# TODO: replay buffer update
-		if len(self.memory) < self.BATCH_SIZE: return None
 		transitions = self.memory.sample(self.BATCH_SIZE)
+		if transitions == None: return None
 		batch = Transition(*zip(*transitions))
 		rotate_batch = torch.tensor(batch.action)[:, 0].to(self.device)
+		oppo_rotate = self._opposite_rotate_idx(rotate_batch)
+		rotate_batch = torch.cat([rotate_batch, oppo_rotate])
 		reward_batch = torch.tensor(batch.reward).to(self.device)
 		non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,batch.next_state)),
 									  device=self.device, dtype=torch.bool)
 		non_final_next_states = [s for s in batch.next_state if s is not None]
-
-		import pdb; pdb.set_trace()
+		if non_final_next_states == []:
+			import pdb; pdb.set_trace()
+		non_final_len = len(non_final_next_states)
 
 		# Compute Q(s_t, a)
-		preds = self.model(batch.state, rotate_batch).contiguous()
-		state_action_values = preds.view(self.BATCH_SIZE, -1).max(1).values
-		import pdb; pdb.set_trace()
-		
-		with torch.no_grad():  # Compute V(s_{t+1}) for all next states
-			non_final_next_preds = self.target_net(non_final_next_states).contiguous()
-			non_final_next_values = non_final_next_preds.view(self.BATCH_SIZE, -1).max(1).values
-			next_state_values = torch.zeros(self.BATCH_SIZE, device=self.device)
-			next_state_values[non_final_mask] = non_final_next_values
-			# Compute the expected Q values
-			expected_state_action_values = reward_batch + self.GAMMA * next_state_values
+		preds = self.model(batch.state + batch.state, rotate_batch).contiguous()
+		state_action_values = preds.view(self.BATCH_SIZE * 2, -1).max(1).values
 
-		# Huber loss
+		# Compute V(s_{t+1})
+		next_state_values = torch.zeros(self.BATCH_SIZE, device=self.device)
+		if non_final_len > 0:
+			with torch.no_grad():  # Compute V(s_{t+1}) for all next states
+				non_final_next_preds = self.target_net(non_final_next_states).contiguous()
+				non_final_next_values = non_final_next_preds.view(non_final_len, -1).max(1).values
+				next_state_values[non_final_mask] = non_final_next_values
+		# Compute the expected Q values
+		expected_state_action_values = reward_batch + self.GAMMA * next_state_values
+		expected_state_action_values = expected_state_action_values.repeat(2)
+
+		# Compute Huber loss & backprop(Optimize the model)
 		loss = F.smooth_l1_loss(state_action_values, expected_state_action_values)
-		# Optimize the model
 		self.optimizer.zero_grad()
 		loss.backward()
 		torch.nn.utils.clip_grad_norm_(self.model.parameters(), 20)
 		self.optimizer.step()
-		import pdb; pdb.set_trace()
+		print("model updated, loss = %.4f" % (float(loss)))
 		return float(loss)
 
 	def _opposite_rotate_idx(self, idx):

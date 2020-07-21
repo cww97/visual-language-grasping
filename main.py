@@ -5,7 +5,8 @@ import threading
 import time
 import numpy as np
 import torch
-from trainer import Trainer, Transition, State
+from trainer import Trainer, Transition
+from models import State
 from logger import Logger
 import utils
 from envs.real.robot import RealRobot
@@ -70,10 +71,7 @@ class Solver():
 					next_state = State(self.env.instruction, *img_data)
 				
 				# store in replay buffer
-				if reward == -2:
-					self.trainer.fail_memory.push(state, action, next_state, reward)
-				else:
-					self.trainer.grasp_memory.push(state, action, next_state, reward)
+				self.trainer.memory.push(state, action, next_state, reward)
 				state = next_state
 
 				print('Iter: %d, %s, Reward = %d, Time: %.2f' % (
@@ -183,7 +181,7 @@ class Solver():
 		return (color_data, depth_data, widths)
 
 	def _check_stupid(self):
-		if self.no_change_cnt > 5:
+		if self.no_change_cnt >= 5:
 			self.no_change_cnt = 0
 			# print('no change for a long time, Reset.')
 			return True
