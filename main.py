@@ -1,19 +1,16 @@
 #!/usr/bin/env python
 
 import argparse
-import threading
 import time
 import numpy as np
 import torch
-from trainer import Trainer, Transition
+from trainer import Trainer
 from models import State
 from logger import Logger
 import utils
-from envs.real.robot import RealRobot
 from envs.simulation.robot import SimRobot
 from utils.config import Config
 from tensorboardX import SummaryWriter
-from envs.robot import Reward
 from scipy import ndimage
 from itertools import count
 from torch.autograd import Variable

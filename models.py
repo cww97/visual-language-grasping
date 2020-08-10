@@ -20,7 +20,7 @@ class EncoderLSTM(nn.Module):
 		attention methods) and a decoder initial state. '''
 
 	def __init__(self, vocab_size, padding_idx, embedding_size=256, hidden_size=512,
-				 dropout_ratio=0.1, bidirectional=False, num_layers=1):
+					dropout_ratio=0.1, bidirectional=False, num_layers=1):
 		super(EncoderLSTM, self).__init__()
 		self.embedding_size = embedding_size
 		self.hidden_size = hidden_size

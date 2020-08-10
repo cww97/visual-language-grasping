@@ -391,8 +391,7 @@ class SimRobot(BaseRobot):
 		move_direction = np.asarray([tool_position[0] - UR5_target_position[0], tool_position[1] - UR5_target_position[1], tool_position[2] - UR5_target_position[2]])
 		move_magnitude = np.linalg.norm(move_direction)
 		move_step = 0.05 * move_direction / move_magnitude
-		if np.floor(move_direction[0] / move_step[0]) == np.nan or move_step[0] == 0:
-			import pdb; pdb.set_trace() 
+		# if np.floor(move_direction[0] / move_step[0]) == np.nan or move_step[0] == 0: import pdb; pdb.set_trace() 
 		num_move_steps = int(np.floor(move_direction[0] / move_step[0])) if move_step[0] != 0 else 1
 
 		# Compute gripper orientation and rotation increments

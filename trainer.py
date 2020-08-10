@@ -5,12 +5,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy import ndimage
-from torch.autograd import Variable
-
 from envs.data import Data as TextData
-from envs.robot import Reward
-from models import reinforcement_net, State
-from utils import CrossEntropyLoss2d
+from models import reinforcement_net
 from collections import namedtuple
 import random
 import math
@@ -22,23 +18,23 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 
 class ReplayMemory(object):
 
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
+	def __init__(self, capacity):
+		self.capacity = capacity
+		self.memory = []
+		self.position = 0
 
-    def push(self, transition):
-        """Saves a transition."""
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = transition
-        self.position = (self.position + 1) % self.capacity
+	def push(self, transition):
+		"""Saves a transition."""
+		if len(self.memory) < self.capacity:
+			self.memory.append(None)
+		self.memory[self.position] = transition
+		self.position = (self.position + 1) % self.capacity
 
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+	def sample(self, batch_size):
+		return random.sample(self.memory, batch_size)
 
-    def __len__(self):
-        return len(self.memory)
+	def __len__(self):
+		return len(self.memory)
 
 
 class MultiReplayMemory(object):
