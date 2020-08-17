@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from scipy import ndimage
 from envs.data import Data as TextData
-from models import reinforcement_net
+from models import YoungNet
 from collections import namedtuple
 import random
 import math
@@ -70,12 +70,12 @@ class Trainer(object):
 		
 		self.text_data = TextData()
 		vocab, pad_idx = len(self.text_data.text_field.vocab), self.text_data.padding_idx
-		self.model = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
+		self.model = YoungNet(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
 		if load_snapshot:  # Load pre-trained model
 			self.model.load_state_dict(torch.load(snapshot_file))
 			print('Pre-trained model snapshot loaded from: %s' % (snapshot_file))
 		self.model.train()  # Set model to training mode
-		self.target_net = reinforcement_net(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
+		self.target_net = YoungNet(vocab_size=vocab, padding_idx=pad_idx).to(self.device)
 		self.target_net.load_state_dict(self.model.state_dict())
 		self.target_net.eval()
 
@@ -108,7 +108,7 @@ class Trainer(object):
 
 	def select_action(self, state, env=None):
 		sample = random.random()
-		eps_threshold = self._get_eps_threshold()
+		eps_threshold = 0  # self._get_eps_threshold()
 		self.iteration += 1
 
 		if sample > eps_threshold:

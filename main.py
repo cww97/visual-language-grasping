@@ -51,8 +51,8 @@ class Solver():
 			self.env.reset()
 			# print('instruction: %s' % (self.env.instruction_str))
 			self.no_change_cnt = 0
-			img_data, color_map, depth_map = self._get_imgs()
-			state = State(self.env.instruction, *img_data)
+			color_map, depth_map = self._get_imgs()
+			state = State(self.env.instruction, color_map, depth_map)
 			# import pdb; pdb.set_trace()
 			for t in count():
 				time_0 = time.time()
@@ -61,8 +61,8 @@ class Solver():
 				self._log_board_save(color_map, choice, action, grasp_pred, reward)
 				
 				# observe new state
-				img_data, color_map, depth_map = self._get_imgs()
-				next_state = None if done else State(self.env.instruction, *img_data)
+				color_map, depth_map = self._get_imgs()
+				next_state = None if done else State(self.env.instruction, color_map, depth_map)
 				
 				# store in replay buffer
 				self.trainer.memory.push(state, action, next_state, reward)
@@ -123,53 +123,7 @@ class Solver():
 		self.logger.save_images(self.trainer.iteration, color_img, depth_img, '0')
 		self.logger.save_heightmaps(self.trainer.iteration, color_map, depth_map, '0')
 	
-		return self._preprocess_img(color_map, depth_map), color_map, depth_map
-
-	def _preprocess_img(self, color_heightmap, depth_heightmap):
-		# Apply 2x scale to input heightmaps
-		color_heightmap_2x = ndimage.zoom(color_heightmap, zoom=[2, 2, 1], order=0)
-		depth_heightmap_2x = ndimage.zoom(depth_heightmap, zoom=[2, 2], order=0)
-
-		# Add extra padding (to handle rotations inside network)
-		diag_length = float(color_heightmap_2x.shape[0]) * np.sqrt(2)
-		diag_length = np.ceil(diag_length / 32) * 32
-		padding_width = int((diag_length - color_heightmap_2x.shape[0]) / 2)
-		color_heightmap_2x_r = np.pad(color_heightmap_2x[:, :, 0], padding_width, 'constant', constant_values=0)
-		color_heightmap_2x_r.shape = (color_heightmap_2x_r.shape[0], color_heightmap_2x_r.shape[1], 1)
-		color_heightmap_2x_g = np.pad(color_heightmap_2x[:, :, 1], padding_width, 'constant', constant_values=0)
-		color_heightmap_2x_g.shape = (color_heightmap_2x_g.shape[0], color_heightmap_2x_g.shape[1], 1)
-		color_heightmap_2x_b = np.pad(color_heightmap_2x[:, :, 2], padding_width, 'constant', constant_values=0)
-		color_heightmap_2x_b.shape = (color_heightmap_2x_b.shape[0], color_heightmap_2x_b.shape[1], 1)
-		color_heightmap_2x = np.concatenate((color_heightmap_2x_r, color_heightmap_2x_g, color_heightmap_2x_b), axis=2)
-		depth_heightmap_2x = np.pad(depth_heightmap_2x, padding_width, 'constant', constant_values=0)
-		# import cv2; cv2.imwrite('rua_padding.png', color_heightmap_2x)
-
-		# Pre-process color image (scale and normalize)
-		image_mean = [0.485, 0.456, 0.406]
-		image_std = [0.229, 0.224, 0.225]
-		input_color_image = color_heightmap_2x.astype(float) / 255
-		for c in range(3):
-			input_color_image[:, :, c] = (input_color_image[:, :, c] - image_mean[c]) / image_std[c]
-
-		# Pre-process depth image (normalize)
-		image_mean = [0.01, 0.01, 0.01]
-		image_std = [0.03, 0.03, 0.03]
-		depth_heightmap_2x.shape = (depth_heightmap_2x.shape[0], depth_heightmap_2x.shape[1], 1)
-		input_depth_image = np.concatenate((depth_heightmap_2x, depth_heightmap_2x, depth_heightmap_2x), axis=2)
-		for c in range(3):
-			input_depth_image[:, :, c] = (input_depth_image[:, :, c] - image_mean[c]) / image_std[c]
-
-		# Construct minibatch of size 1 (b,c,h,w)
-		_shape = input_color_image.shape
-		input_color_image.shape = (_shape[0], _shape[1], _shape[2], 1)
-		input_depth_image.shape = (_shape[0], _shape[1], _shape[2], 1)
-
-		widths = (padding_width//2, color_heightmap_2x.shape[0]//2 - padding_width //2)
-		color_data = torch.from_numpy(input_color_image.astype(np.float32)).permute(3, 2, 0, 1)
-		depth_data = torch.from_numpy(input_depth_image.astype(np.float32)).permute(3, 2, 0, 1)
-		color_data = Variable(color_data, requires_grad=False)
-		depth_data = Variable(depth_data, requires_grad=False)
-		return (color_data, depth_data, widths)
+		return color_map, depth_map
 
 	def _check_stupid(self):
 		if self.no_change_cnt >= 5:
