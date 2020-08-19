@@ -35,7 +35,7 @@ class Seg(nn.Module):
 			is_valid[i, 0: img.shape[0]] = 1
 			candidates[i, 0: img.shape[0]] = img
 
-		return candidates, is_valid
+		return (candidates.cuda(), is_valid.cuda())
 
 	def _get_candidate(self, color_img, depth_img):
 		denoise_img = self._remove_noise(color_img)
