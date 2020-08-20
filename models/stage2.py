@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import torch
 from torchvision.models import resnet50
 from collections import OrderedDict
+from models.attentions import DotAttention
 
 
 class EncoderLSTM(nn.Module):
@@ -67,6 +68,7 @@ class EncoderLSTM(nn.Module):
 
 
 class RgbdCNN(nn.Module):
+
 	def __init__(self, output_dim=1024):
 		super().__init__()
 		self.output_dim = output_dim
@@ -114,13 +116,15 @@ class SelectNet(nn.Module):
 
 	def __init__(self, **kwargs):
 		super().__init__()
-		self.text_encoder = EncoderLSTM(**kwargs)
-		self.img_encoder = RgbdCNN()
+		self.text_encoder = EncoderLSTM(**kwargs, hidden_size=256)
+		self.img_encoder = RgbdCNN(output_dim=1024)
+		self.attention = DotAttention(text_dim=256, imgs_dim=1024)
+		self.softmax = nn.Softmax()
 
 	def forward(self, instructions, candidates):
 		'''
 		instructions:
-		candidates: [b, k, 4, 224, 224]
+		candidates: [batch_size, k, c, h, w]
 		'''
 		instr_tensors = torch.cat(instructions.tensor).cuda()
 		instr_lengths = torch.Tensor(instructions.length).cuda()
@@ -129,11 +133,8 @@ class SelectNet(nn.Module):
 		imgs_feats = self.img_encoder(candidates[0])
 		is_valid = candidates[1]
 
-		# attention
+		scores = self.attention(text_feats, imgs_feats)
+		scores[is_valid == 0] = -float('inf')
+		logits = self.softmax(scores)
 
-
-		# candidates:
-
-
-		import pdb; pdb.set_trace()
-		return 0
+		return logits

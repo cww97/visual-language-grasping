@@ -114,6 +114,7 @@ class Trainer(object):
 		if sample > eps_threshold:
 			with torch.no_grad():
 				grasp_pred = self.model([state]).cpu().data.numpy()
+				# change this
 				action = np.unravel_index(np.argmax(grasp_pred), grasp_pred.shape)
 				choice = 'policy_network'
 		else:
