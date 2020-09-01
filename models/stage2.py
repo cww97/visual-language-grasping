@@ -100,7 +100,8 @@ class RgbdCNN(nn.Module):
 		batch_size, max_k, c, h, w = candidates.shape
 		candidates = candidates.view(-1, c, h, w)
 		color_imgs = candidates[:, :3, :, :]
-		depth_imgs = candidates[:, -1:, :, :].repeat(1, 3, 1, 1)
+		depth_imgs = candidates[:, 3:, :, :]
+		# depth_imgs = candidates[:, -1:, :, :].repeat(1, 3, 1, 1)
 		
 		color_feats = self.color_encoder(color_imgs)
 		depth_feats = self.depth_encoder(depth_imgs)
@@ -117,9 +118,10 @@ class SelectNet(nn.Module):
 	def __init__(self, **kwargs):
 		super().__init__()
 		self.text_encoder = EncoderLSTM(**kwargs, hidden_size=256)
-		self.img_encoder = RgbdCNN(output_dim=1024)
+		self.img0_encoder = RgbdCNN(output_dim=1024)
+		# self.img1_encoder = RgbdCNN(output_dim=1024)
 		self.attention = DotAttention(text_dim=256, imgs_dim=1024)
-		self.softmax = nn.Softmax()
+		self.softmax = nn.Softmax(dim=1)
 
 	def forward(self, instructions, candidates):
 		'''
@@ -130,11 +132,14 @@ class SelectNet(nn.Module):
 		instr_lengths = torch.Tensor(instructions.length).cuda()
 		text_feats, _, _ = self.text_encoder(instr_tensors, instr_lengths)  # [b, len, dim_1]
 
-		imgs_feats = self.img_encoder(candidates[0])
+		imgs_feats = self.img0_encoder(candidates[0])
+		# img1_feats = self.img1_encoder(candidates[1])
 		is_valid = candidates[1]
+		# imgs_feats = torch.cat((img0_feats, img1_feats))  # ?
 
 		scores = self.attention(text_feats, imgs_feats)
+		# import pdb; pdb.set_trace()
 		scores[is_valid == 0] = -float('inf')
-		logits = self.softmax(scores)
+		pred = self.softmax(scores)
 
-		return logits
+		return pred

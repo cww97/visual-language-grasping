@@ -9,8 +9,8 @@ import torch.nn.functional as F
 import torchvision
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from collections import namedtuple
 from envs.data import Instruction
+from collections import namedtuple
 State = namedtuple('State', ('instruction', 'color_data', 'depth_data', 'widths'))
 
 

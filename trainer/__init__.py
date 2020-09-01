@@ -119,7 +119,7 @@ class Trainer(object):
 				choice = 'policy_network'
 		else:
 			grasp_pred = None
-			action = env.random_grasp_action()
+			action = env.random_trainergrasp_action()
 			choice = 'random_select'
 
 		return choice, action, grasp_pred

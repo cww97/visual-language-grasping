@@ -6,23 +6,20 @@ names:
   1.obj:
     - arch
   2.obj:
-    - cuboid
+    - square piece
   3.obj:
-    - cuboid
+    - long cuboid
   4.obj:
     - cube
   6.obj:
-    - cuboid
     - regular quadrangular prism
   7.obj:
     - semi-cylinder
   8.obj:
-  - cylinder
+    - cylinder
 groups:
   - [0.obj]
   - [1.obj]
   - [2.obj, 3.obj, 4.obj, 6.obj]
   - [7.obj]
   - [8.obj]
-
-

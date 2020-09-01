@@ -11,6 +11,8 @@ from ..robot import Reward
 from ..data import Data as TextData
 import random
 from bisect import bisect_right
+import cv2
+import os
 
 
 class SimRobot(BaseRobot):
@@ -19,6 +21,7 @@ class SimRobot(BaseRobot):
 		self.text_data = TextData()
 
 		# Define colors for object meshes (Tableau palette)
+		self.color_name = ['blue', 'green', 'brown', 'orange', 'yellow', 'gray', 'red', 'purple', 'cyan', 'pink']
 		self.color_space = np.asarray([[78.0, 121.0, 167.0],  # blue
 										[89.0, 161.0, 79.0],  # green
 										[156, 117, 95],  # brown
@@ -84,11 +87,12 @@ class SimRobot(BaseRobot):
 	def setup_sim_camera(self):
 
 		# Get handle to camera
-		sim_ret, self.cam_handle = vrep.simxGetObjectHandle(self.sim_client, 'Vision_sensor_persp', vrep.simx_opmode_blocking)
+		sim_ret, self.cam_handle = vrep.simxGetObjectHandle(self.sim_client, 'Vision_sensor_persp', self.MODE)
+		_, self.up_cam_handle = vrep.simxGetObjectHandle(self.sim_client, 'Vision_sensor_ortho', self.MODE)
 
 		# Get camera pose and intrinsics in simulationo
-		sim_ret, cam_position = vrep.simxGetObjectPosition(self.sim_client, self.cam_handle, -1, vrep.simx_opmode_blocking)
-		sim_ret, cam_orientation = vrep.simxGetObjectOrientation(self.sim_client, self.cam_handle, -1, vrep.simx_opmode_blocking)
+		sim_ret, cam_position = vrep.simxGetObjectPosition(self.sim_client, self.cam_handle, -1, self.MODE)
+		sim_ret, cam_orientation = vrep.simxGetObjectOrientation(self.sim_client, self.cam_handle, -1, self.MODE)
 		cam_trans = np.eye(4, 4)
 		cam_trans[0:3, 3] = np.asarray(cam_position)
 		cam_orientation = [-cam_orientation[0], -cam_orientation[1], -cam_orientation[2]]
@@ -103,18 +107,24 @@ class SimRobot(BaseRobot):
 		self.bg_color_img, self.bg_depth_img = self.get_camera_data()
 		self.bg_depth_img = self.bg_depth_img * self.cam_depth_scale
 
-	def add_objects(self):
-		# Randomly choose objects to add to scene
-		group_chosen = np.random.choice(self.groups, size=self.num_obj, replace=False)
-		self.obj_mesh_ind = np.array([self.mesh_list.index(np.random.choice(obj)) for obj in group_chosen])
+	def add_objects(self, mesh_idx=-1, mesh_color=-1):
 		# TODO
 		# handle <-> ind <-> obj -> name
 		# Just for debug
 		# print([self.mesh_list[ind] for ind in self.obj_mesh_ind])
 		# self.obj_mesh_ind = np.array(range(len(self.mesh_list)))
-
 		# self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
-		self.obj_mesh_color = self.color_space[np.random.choice(np.arange(self.color_space.shape[0]), size=self.num_obj, replace=False)]
+		# Randomly choose objects to add to scene
+
+		if mesh_idx == -1:
+			group_chosen = np.random.choice(self.groups, size=self.num_obj, replace=False)
+			self.obj_mesh_ind = np.array([self.mesh_list.index(np.random.choice(obj)) for obj in group_chosen])
+			self.obj_mesh_color = self.color_space[np.random.choice(np.arange(self.color_space.shape[0]), size=self.num_obj, replace=False)]
+		else:
+			self.obj_mesh_ind = np.array([mesh_idx])
+			self.obj_mesh_color = np.array([mesh_color])
+			# import pdb; pdb.set_trace()
+		
 		# Add each object to robot workspace at x,y location and orientation (random or pre-loaded)
 		self.object_handles = []
 		for object_idx in range(len(self.obj_mesh_ind)):
@@ -137,6 +147,7 @@ class SimRobot(BaseRobot):
 		self.prev_obj_positions = []
 		self.obj_positions = []
 		self.get_instruction()  # nb
+		# import pdb; pdb.set_trace()
 
 	def restart_sim(self):
 		sim_ret, self.UR5_target_handle = vrep.simxGetObjectHandle(self.sim_client, 'UR5_target', vrep.simx_opmode_blocking)
@@ -225,8 +236,8 @@ class SimRobot(BaseRobot):
 		obj_positions = []
 		obj_orientations = []
 		for object_handle in self.object_handles:
-			sim_ret, object_position = vrep.simxGetObjectPosition(self.sim_client, object_handle, -1, vrep.simx_opmode_blocking)
-			sim_ret, object_orientation = vrep.simxGetObjectOrientation(self.sim_client, object_handle, -1, vrep.simx_opmode_blocking)
+			sim_ret, object_position = vrep.simxGetObjectPosition(self.sim_client, object_handle, -1, self.MODE)
+			sim_ret, object_orientation = vrep.simxGetObjectOrientation(self.sim_client, object_handle, -1, self.MODE)
 			obj_positions.append(object_position)
 			obj_orientations.append(object_orientation)
 
@@ -235,8 +246,8 @@ class SimRobot(BaseRobot):
 	def reposition_objects(self, workspace_limits):
 		# Move gripper out of the way
 		self.move_to([-0.1, 0, 0.3], None)
-		# sim_ret, UR5_target_handle = vrep.simxGetObjectHandle(self.sim_client,'UR5_target',vrep.simx_opmode_blocking)
-		# vrep.simxSetObjectPosition(self.sim_client, UR5_target_handle, -1, (-0.5,0,0.3), vrep.simx_opmode_blocking)
+		# sim_ret, UR5_target_handle = vrep.simxGetObjectHandle(self.sim_client,'UR5_target', self.MODE)
+		# vrep.simxSetObjectPosition(self.sim_client, UR5_target_handle, -1, (-0.5,0,0.3), self.MODE)
 		# time.sleep(1)
 
 		for object_handle in self.object_handles:
@@ -245,13 +256,15 @@ class SimRobot(BaseRobot):
 			drop_y = (workspace_limits[1][1] - workspace_limits[1][0] - 0.2) * np.random.random_sample() + workspace_limits[1][0] + 0.1
 			object_position = [drop_x, drop_y, 0.15]
 			object_orientation = [2 * np.pi * np.random.random_sample(), 2 * np.pi * np.random.random_sample(), 2 * np.pi * np.random.random_sample()]
-			vrep.simxSetObjectPosition(self.sim_client, object_handle, -1, object_position, vrep.simx_opmode_blocking)
-			vrep.simxSetObjectOrientation(self.sim_client, object_handle, -1, object_orientation, vrep.simx_opmode_blocking)
+			vrep.simxSetObjectPosition(self.sim_client, object_handle, -1, object_position, self.MODE)
+			vrep.simxSetObjectOrientation(self.sim_client, object_handle, -1, object_orientation, self.MODE)
 			time.sleep(2)
 
-	def get_camera_data(self):
+	def get_camera_data(self, handle=-1):
+		if handle == -1:
+			handle = self.cam_handle
 		# Get color image from simulation
-		sim_ret, resolution, raw_image = vrep.simxGetVisionSensorImage(self.sim_client, self.cam_handle, 0, vrep.simx_opmode_blocking)
+		sim_ret, resolution, raw_image = vrep.simxGetVisionSensorImage(self.sim_client, handle, 0, self.MODE)
 		color_img = np.asarray(raw_image)
 		color_img.shape = (resolution[1], resolution[0], 3)
 		color_img = color_img.astype(np.float) / 255
@@ -261,7 +274,7 @@ class SimRobot(BaseRobot):
 		color_img = color_img.astype(np.uint8)
 
 		# Get depth image from simulation
-		sim_ret, resolution, depth_buffer = vrep.simxGetVisionSensorDepthBuffer(self.sim_client, self.cam_handle, vrep.simx_opmode_blocking)
+		sim_ret, resolution, depth_buffer = vrep.simxGetVisionSensorDepthBuffer(self.sim_client, handle, self.MODE)
 		depth_img = np.asarray(depth_buffer)
 		depth_img.shape = (resolution[1], resolution[0])
 		depth_img = np.fliplr(depth_img)

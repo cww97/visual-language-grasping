@@ -24,7 +24,9 @@ class Seg(nn.Module):
 		batch_imgs = []
 		for color_img, depth_img in zip(color_imgs, depth_imgs):
 			batch_imgs.append(self._get_candidate(color_img, depth_img))
+		return self.pack_data(batch_size, batch_imgs)
 
+	def pack_data(self, batch_size, batch_imgs):
 		max_k = -1
 		for img in batch_imgs:
 			max_k = max(max_k, img.shape[0])
@@ -35,6 +37,7 @@ class Seg(nn.Module):
 			is_valid[i, 0: img.shape[0]] = 1
 			candidates[i, 0: img.shape[0]] = img
 
+		# candidates: (img0, img1, is_valid)
 		return (candidates.cuda(), is_valid.cuda())
 
 	def _get_candidate(self, color_img, depth_img):
@@ -42,7 +45,7 @@ class Seg(nn.Module):
 		segments_fz = felzenszwalb(denoise_img, scale=28000, min_size=150)
 		num_seg = len(np.unique(segments_fz))
 
-		depth_img = depth_img[:, :, np.newaxis]
+		# depth_img = depth_img[:, :, np.newaxis]  # when depth_img has one one channel
 		color_depth_img = np.concatenate((color_img, depth_img), axis=2)
 		obj_imgs = []
 		for i in range(1, num_seg):

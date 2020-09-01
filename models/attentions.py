@@ -7,7 +7,7 @@ class DotAttention(nn.Module):
 		super().__init__()
 		self.text_in = nn.Linear(text_dim, hidden_dim, bias=False)
 		self.imgs_in = nn.Linear(imgs_dim, hidden_dim, bias=False)
-
+		self.tanh = nn.Tanh()
 
 	def forward(self, text_feats, imgs_feats):
 		'''
@@ -24,5 +24,6 @@ class DotAttention(nn.Module):
 		imgs_feats = self.imgs_in(imgs_feats)
 		imgs_feats = imgs_feats.reshape(batch_size, k, -1)
 
-		scores = torch.bmm(imgs_feats, text_feats.unsqueeze(2))
-		return scores.squeeze(2)
+		scores = torch.bmm(imgs_feats, text_feats.unsqueeze(2)).squeeze(2)
+		scores = self.tanh(scores)
+		return scores.clone()
